@@ -89,7 +89,7 @@ func (c *MemifInterfaceConverter) ToDataRequest(rv *rpc.DataRequest) (*rpc.DataR
 		rv.LinuxRoutes = append(rv.LinuxRoutes, &l3.LinuxStaticRoutes_Route{
 			DstIpAddr: route.Prefix,
 			Interface: c.conversionParameters.Name,
-			GwAddr: dstIpAddresses,
+			GwAddr:    dstIpAddresses,
 		})
 	}
 	return rv, nil
