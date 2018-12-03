@@ -14,7 +14,7 @@ func (c *ConnectionContext) IsComplete() error {
 	return nil
 }
 
-func (c *ConnectionContext) IsCompleteAgainsOriginal(original *ConnectionContext) error {
+func (c *ConnectionContext) MeetsRequirements(original *ConnectionContext) error {
 	if c == nil {
 		return fmt.Errorf("ConnectionContext should not be nil...")
 	}
