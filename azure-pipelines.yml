@@ -32,39 +32,53 @@ steps:
       echo '##vso[task.prependpath]$(GOROOT)/bin'
       go version
     displayName: 'Set up the Go workspace'
+
   - script: |
       sudo apt-get install yamllint python3-pkg-resources
       ./.circleci/install-shellcheck.sh
     displayName: 'Sanity check install deps'
+    workingDirectory: '$(modulePath)'
+
   - script: |
       ./scripts/yaml_lint.sh
     workingDirectory: '$(modulePath)'
     displayName: 'Yaml sanity check'
+
   - script: |
       ! go fmt ./... 2>&1 | read
     workingDirectory: '$(modulePath)'
     displayName: 'Check go formatting'
+
   - script: |
       go get golang.org/x/lint/golint
       golint ./...
     displayName: 'Execute golint'
+    workingDirectory: '$(modulePath)'
+
   - script: ./scripts/go-mod-download.sh
     workingDirectory: '$(modulePath)'
     displayName: 'Download go modules'
+
   - script: ./scripts/prepare-generate.sh
     workingDirectory: '$(modulePath)'
     displayName: 'Preapare code generation'
+
   - script: sudo ./scripts/install-protoc.sh
     displayName: 'Install protobuf compiler'
+    workingDirectory: '$(modulePath)'
+
   - script: go generate ./...
     workingDirectory: '$(modulePath)'
     displayName: 'Generate all stuff'
+
   - script: make vet check
     workingDirectory: '$(modulePath)'
     displayName: 'Check scripts'
+
   - script:  go build ./...
     workingDirectory: '$(modulePath)'
     displayName: 'Check all code is compiling'
+
   - script: gotestsum --junitfile ./junit/sanity-unit-tests.xml -- -short `go list ./... | grep -v networkservicemesh/test/`
     workingDirectory: '$(modulePath)'
     displayName: 'Run sanity tests'
