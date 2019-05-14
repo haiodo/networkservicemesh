@@ -25,8 +25,9 @@ steps:
       shopt -s extglob
       echo "GOPATH contents:"
       ls -la '$(system.defaultWorkingDirectory)'
-      ls -la '$(modulePath)'
       mv !(gopath) '$(modulePath)'
+      ls -la '$(modulePath)'
+      ls -la '$(system.defaultWorkingDirectory)'
       echo '##vso[task.prependpath]$(GOBIN)'
       echo '##vso[task.prependpath]$(GOROOT)/bin'
       go version
