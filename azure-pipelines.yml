@@ -22,7 +22,7 @@ steps:
       mkdir -p '$(GOPATH)/pkg'
       mkdir -p '$(modulePath)'
       mkdir -p '$(modulePath)/junit/'
-      shopt -s extglob
+      shopt -s dotglob nullglob extglob
       echo "GOPATH contents:"
       ls -la '$(system.defaultWorkingDirectory)'
       mv !(gopath) '$(modulePath)'
@@ -41,7 +41,7 @@ steps:
     workingDirectory: '$(modulePath)'
     displayName: 'Yaml sanity check'
   - script: |
-      "! go fmt ./... 2>&1 | read"
+      ! go fmt ./... 2>&1 | read
     workingDirectory: '$(modulePath)'
     displayName: 'Check go formatting'
   - script: |

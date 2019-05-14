@@ -138,7 +138,6 @@ type Model interface {
 	ConnectionId() string
 	CorrectIdGenerator(id string)
 
-
 	// After listener will be added it will be called for all existing dataplanes/endpoints
 	AddListener(listener ModelListener)
 	RemoveListener(listener ModelListener)
@@ -401,7 +400,7 @@ func (i *impl) CorrectIdGenerator(id string) {
 	defer i.Unlock()
 
 	value, err := strconv.ParseUint(id, 16, 64)
-	if err  != nil {
+	if err != nil {
 		logrus.Errorf("Failed to update id genrator %v", err)
 	}
 	if i.lastConnnectionId < value {
