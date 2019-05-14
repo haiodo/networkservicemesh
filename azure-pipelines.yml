@@ -23,14 +23,14 @@ steps:
       mkdir -p '$(modulePath)'
       mkdir -p '$(modulePath)/junit/'
       shopt -s extglob
-      mv !(gopath) '$(modulePath)'
+      echo "GOPATH contents:"
+      ls -la '$(system.defaultWorkingDirectory)'
+      ls -la '$(modulePath)'
+#      mv !(gopath) '$(modulePath)'
       echo '##vso[task.prependpath]$(GOBIN)'
       echo '##vso[task.prependpath]$(GOROOT)/bin'
       go version
     displayName: 'Set up the Go workspace'
-  - script: go get -v -t -d ./...
-    workingDirectory: '$(modulePath)'
-    displayName: 'go get sources'
   - script: |
       sudo apt-get install yamllint python3-pkg-resources
       ./.circleci/install-shellcheck.sh
