@@ -21,7 +21,7 @@ steps:
       mkdir -p '$(GOBIN)'
       mkdir -p '$(GOPATH)/pkg'
       mkdir -p '$(modulePath)'
-      mkdir -p '/junit/'
+      mkdir -p '$(modulePath)/junit/'
       shopt -s extglob
       mv !(gopath) '$(modulePath)'
       echo '##vso[task.prependpath]$(GOBIN)'
@@ -65,6 +65,6 @@ steps:
     workingDirectory: '$(modulePath)'
     displayName: 'Check all code is compiling'
 
-  - script: gotestsum --junitfile ~/junit/unit-tests.xml -- -short `go list ./... | grep -v networkservicemesh/test/`
+  - script: gotestsum --junitfile ./junit/sanity-unit-tests.xml -- -short `go list ./... | grep -v networkservicemesh/test/`
     workingDirectory: '$(modulePath)'
     displayName: 'Run sanity tests'
