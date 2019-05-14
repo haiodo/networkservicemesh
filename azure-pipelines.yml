@@ -32,12 +32,10 @@ steps:
       sudo apt-get install yamllint python3-pkg-resources
       ./.circleci/install-shellcheck.sh
     displayName: 'Sanity check install deps'
-  - script: |
-      pwd
-      echo "$(modulePath)"
-      ./scripts/yaml_lint.sh
-    workingDirectory: '$(modulePath)'
-    displayName: 'Yaml sanity check'
+#  - script: |
+#      ./scripts/yaml_lint.sh
+#    workingDirectory: '$(modulePath)'
+#    displayName: 'Yaml sanity check'
   - script: |
       "! go fmt ./... 2>&1 | read"
     workingDirectory: '$(modulePath)'
