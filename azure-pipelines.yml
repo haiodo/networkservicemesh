@@ -33,7 +33,7 @@ steps:
       ./.circleci/install-shellcheck.sh
     displayName: 'Sanity check install deps'
   - script: |
-      yamllint -c .yamllint.yml $(git ls-files '*.yaml' '*.yml')
+      ./scripts/yaml_lint.sh
     workingDirectory: '$(modulePath)'
     displayName: 'Yaml sanity check'
   - script: |
