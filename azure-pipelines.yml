@@ -8,7 +8,7 @@ trigger:
 
 variables:
   GOBIN:  '$(GOPATH)/bin' # Go binaries path
-  GOROOT: '/usr/local/go1.11' # Go installation path
+  GOROOT: '/usr/local/go1.12.1' # Go installation path
   GOPATH: '$(system.defaultWorkingDirectory)/gopath' # Go workspace path
   GO111MODULE: 'on'
   modulePath: '$(GOPATH)/src/github.com/$(build.repository.name)' # Path to the module's code
@@ -28,14 +28,17 @@ steps:
       echo '##vso[task.prependpath]$(GOROOT)/bin'
       go version
     displayName: 'Set up the Go workspace'
+  - script: go get -v -t -d ./...
+    workingDirectory: '$(modulePath)'
+    displayName: 'go get sources'
   - script: |
       sudo apt-get install yamllint python3-pkg-resources
       ./.circleci/install-shellcheck.sh
     displayName: 'Sanity check install deps'
-#  - script: |
-#      ./scripts/yaml_lint.sh
-#    workingDirectory: '$(modulePath)'
-#    displayName: 'Yaml sanity check'
+  - script: |
+      ./scripts/yaml_lint.sh
+    workingDirectory: '$(modulePath)'
+    displayName: 'Yaml sanity check'
   - script: |
       "! go fmt ./... 2>&1 | read"
     workingDirectory: '$(modulePath)'
@@ -44,30 +47,23 @@ steps:
       go get golang.org/x/lint/golint
       golint ./...
     displayName: 'Execute golint'
-
   - script: ./scripts/go-mod-download.sh
     workingDirectory: '$(modulePath)'
     displayName: 'Download go modules'
-
   - script: ./scripts/prepare-generate.sh
     workingDirectory: '$(modulePath)'
     displayName: 'Preapare code generation'
-
   - script: sudo ./scripts/install-protoc.sh
     displayName: 'Install protobuf compiler'
-
   - script: go generate ./...
     workingDirectory: '$(modulePath)'
     displayName: 'Generate all stuff'
-
   - script: make vet check
     workingDirectory: '$(modulePath)'
     displayName: 'Check scripts'
-
   - script:  go build ./...
     workingDirectory: '$(modulePath)'
     displayName: 'Check all code is compiling'
-
   - script: gotestsum --junitfile ./junit/sanity-unit-tests.xml -- -short `go list ./... | grep -v networkservicemesh/test/`
     workingDirectory: '$(modulePath)'
     displayName: 'Run sanity tests'
