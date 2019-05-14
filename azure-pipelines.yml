@@ -34,9 +34,11 @@ steps:
     displayName: 'Sanity check install deps'
   - script: |
       yamllint -c .yamllint.yml $(git ls-files '*.yaml' '*.yml')
+    workingDirectory: '$(modulePath)'
     displayName: 'Yaml sanity check'
   - script: |
       "! go fmt ./... 2>&1 | read"
+    workingDirectory: '$(modulePath)'
     displayName: 'Check go formatting'
   - script: |
       go get golang.org/x/lint/golint
@@ -48,6 +50,7 @@ steps:
     displayName: 'Download go modules'
 
   - script: ./scripts/prepare-generate.sh
+    workingDirectory: '$(modulePath)'
     displayName: 'Preapare code generation'
 
   - script: sudo ./scripts/install-protoc.sh
