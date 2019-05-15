@@ -13,15 +13,15 @@ jobs:
       - checkout
       - run:
           command: |
-            sudo apt-get install yamllint python3-pkg-resources
-            ./.circleci/install-shellcheck.sh
-      - run: ./scripts/yaml_lint.sh
+            ./scripts/ci/install_yamllint.sh
+            ./scripts/ci/install-shellcheck.sh
+      - run: ./scripts/ci/yaml_lint.sh
       - run: go version
       - run:
           name: Download Go Dependencies
           command: |
             ./scripts/go-mod-download.sh
-      - run: "! go fmt ./... 2>&1 | read"
+      - run: ./scripts/ci/check_formatting.sh
       - run:
           name: golint
           command: |

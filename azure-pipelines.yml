@@ -7,7 +7,7 @@ trigger:
   - master
 
 variables:
-  GOBIN:  '$(GOPATH)/bin' # Go binaries path
+  GOBIN: '$(GOPATH)/bin' # Go binaries path
   GOROOT: '/usr/local/go1.12.1' # Go installation path
   GOPATH: '$(system.defaultWorkingDirectory)/gopath' # Go workspace path
   GO111MODULE: 'on'
@@ -24,34 +24,24 @@ steps:
       mkdir -p '$(modulePath)/junit/'
       shopt -s dotglob nullglob extglob
       echo "GOPATH contents:"
-      ls -la '$(system.defaultWorkingDirectory)'
       mv !(gopath) '$(modulePath)'
-      ls -la '$(modulePath)'
-      ls -la '$(system.defaultWorkingDirectory)'
       echo '##vso[task.prependpath]$(GOBIN)'
       echo '##vso[task.prependpath]$(GOROOT)/bin'
       go version
     displayName: 'Set up the Go workspace'
 
   - script: |
-      sudo apt-get install yamllint python3-pkg-resources
-      ./.circleci/install-shellcheck.sh
-    displayName: 'Sanity check install deps'
-    workingDirectory: '$(modulePath)'
-
-  - script: |
-      ./scripts/yaml_lint.sh
+      ./scripts/ci/install_yamllint.sh
+      ./scripts/ci/install-shellcheck.sh
+      ./scripts/ci/yaml_lint.sh
     workingDirectory: '$(modulePath)'
     displayName: 'Yaml sanity check'
 
-  - script: |
-      ! go fmt ./... 2>&1 | read
+  - script: ./scripts/ci/check_formatting.sh
     workingDirectory: '$(modulePath)'
     displayName: 'Check go formatting'
 
-  - script: |
-      go get golang.org/x/lint/golint
-      golint ./...
+  - script: ./scripts/ci/check_golint.sh
     displayName: 'Execute golint'
     workingDirectory: '$(modulePath)'
 
@@ -75,7 +65,7 @@ steps:
     workingDirectory: '$(modulePath)'
     displayName: 'Check scripts'
 
-  - script:  go build ./...
+  - script: go build ./...
     workingDirectory: '$(modulePath)'
     displayName: 'Check all code is compiling'
 
