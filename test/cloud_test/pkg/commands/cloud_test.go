@@ -5,6 +5,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"os"
+	"time"
 )
 
 var rootCmd = &cobra.Command{
@@ -36,6 +37,8 @@ func Execute() {
 	}
 }
 
+
+
 type TestArguments struct {
 	providerConfig string // A folder to start scaning for tests inside.
 	junitXml string	// File to publish JUnti xml like report into
@@ -47,14 +50,7 @@ var testArguments *TestArguments = &TestArguments{}
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	rootCmd.Flags().StringVarP(&testArguments.providerConfig, "providers", "p", "", "Config file for providers")
-	rootCmd.Flags().StringVarP(&testArguments.clusterTags, "tags", "t", "", "Tags list for cluster tests")
-	rootCmd.Flags().StringVarP(&testArguments.junitXml, "junitFile", "t", "", "Path to junit xml file")
-	rootCmd.Flags().StringVarP(&testArguments.multiTags, "multi", "m", "", "Tag list for multi cluster tests")
-	err := rootCmd.MarkFlagRequired("providers")
-	if err != nil {
-		logrus.Errorf("Error with command %v", err)
-	}
+	rootCmd.Flags().StringVarP(&testArguments.providerConfig, "config", "c", "", "Config file for providers, default .cloudtest.yaml")
 }
 
 func initConfig() {
