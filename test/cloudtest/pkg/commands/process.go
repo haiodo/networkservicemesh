@@ -16,8 +16,8 @@ type proc struct {
 	stderr io.ReadCloser
 }
 
-func execRead( ctx context.Context, args []string) (string, error) {
-	proc, error := execProc(ctx, args)
+func ExecRead( ctx context.Context, args []string) (string, error) {
+	proc, error := ExecProc(ctx, args)
 	if error != nil {
 		return "", error
 	}
@@ -33,7 +33,7 @@ func execRead( ctx context.Context, args []string) (string, error) {
 	return output, nil
 }
 
-func execProc(ctx context.Context, args []string) (proc, error) {
+func ExecProc(ctx context.Context, args []string) (proc, error) {
 	if len(args) == 0 {
 		return proc{}, fmt.Errorf("missing command to run")
 	}
