@@ -262,3 +262,10 @@ func (client *NsmMonitorCrossConnectClient) remotePeerConnectionMonitor(remotePe
 		}
 	}
 }
+
+func (client *NsmMonitorCrossConnectClient) Cleanup() {
+	for _, dpCancel := range client.dataplanes {
+		dpCancel()
+	}
+	logrus.Infof("Cancel Dataplane monitors...")
+}

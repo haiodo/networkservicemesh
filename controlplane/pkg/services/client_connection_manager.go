@@ -45,7 +45,9 @@ func (m *ClientConnectionManager) UpdateClientConnectionSrcStateDown(clientConne
 }
 
 func (m *ClientConnectionManager) UpdateClientConnectionDataplaneStateDown(clientConnections []*model.ClientConnection) {
-	logrus.Info("ClientConnection src state is down because of Dataplane down.")
+	if len(clientConnections) > 0 {
+		logrus.Info("ClientConnection src state is down because of Dataplane down.")
+	}
 	for _, clientConnection := range clientConnections {
 		m.markSourceConnectionDown(clientConnection)
 	}

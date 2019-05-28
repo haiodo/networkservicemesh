@@ -49,6 +49,7 @@ type dataplaneRegistrarServer struct {
 	grpcServer                   *grpc.Server
 	dataplaneRegistrarSocketPath string
 	sock                         net.Listener
+	dataplanes map[string]context.CancelFunc
 }
 
 // dataplaneMonitor is per registered dataplane monitoring routine. It creates a grpc client
@@ -56,17 +57,23 @@ type dataplaneRegistrarServer struct {
 // All changes are reflected in the corresponding dataplane object in the object store.
 // If it detects a failure of the connection, it will indicate that dataplane is no longer operational. In this case
 // dataplaneMonitor will remove dataplane object from the object store and will terminate itself.
-func dataplaneMonitor(model model.Model, dataplaneName string) {
+func dataplaneMonitor(r *dataplaneRegistrarServer, dataplaneName string, ctx context.Context) {
 	var err error
-	dataplane := model.GetDataplane(dataplaneName)
+	dataplane := r.model.GetDataplane(dataplaneName)
+
+	defer func() {
+		delete(r.dataplanes, dataplaneName)
+		r.model.DeleteDataplane(dataplaneName)
+	}()
+
 	if dataplane == nil {
 		logrus.Errorf("Dataplane object store does not have registered plugin %s", dataplaneName)
 		return
 	}
+
 	conn, err := tools.SocketOperationCheck(tools.SocketPath(dataplane.SocketLocation))
 	if err != nil {
 		logrus.Errorf("failure to communicate with the socket %s with error: %+v", dataplane.SocketLocation, err)
-		model.DeleteDataplane(dataplaneName)
 		return
 	}
 	defer conn.Close()
@@ -76,21 +83,25 @@ func dataplaneMonitor(model model.Model, dataplaneName string) {
 	stream, err := dataplaneClient.MonitorMechanisms(context.Background(), &empty.Empty{})
 	if err != nil {
 		logrus.Errorf("fail to create update grpc channel for Dataplane %s with error: %+v, removing dataplane from Objectstore.", dataplane.RegisteredName, err)
-		model.DeleteDataplane(dataplaneName)
 		return
 	}
 	for {
-		updates, err := stream.Recv()
-		if err != nil {
-			logrus.Errorf("fail to receive on update grpc channel for Dataplane %s with error: %+v, removing dataplane from Objectstore.", dataplane.RegisteredName, err)
-			model.DeleteDataplane(dataplaneName)
+		select {
+		case <-ctx.Done():
+			logrus.Info("Context timeout exceeded...")
 			return
+		default:
+			updates, err := stream.Recv()
+			if err != nil {
+				logrus.Errorf("fail to receive on update grpc channel for Dataplane %s with error: %+v, removing dataplane from Objectstore.", dataplane.RegisteredName, err)
+				return
+			}
+			logrus.Infof("Dataplane %s informed of its parameters changes, applying new parameters %+v", dataplaneName, updates.RemoteMechanisms)
+			// TODO: this is not good -- direct model changes
+			dataplane.RemoteMechanisms = updates.RemoteMechanisms
+			dataplane.LocalMechanisms = updates.LocalMechanisms
+			dataplane.MechanismsConfigured = true
 		}
-		logrus.Infof("Dataplane %s informed of its parameters changes, applying new parameters %+v", dataplaneName, updates.RemoteMechanisms)
-		// TODO: this is not good -- direct model changes
-		dataplane.RemoteMechanisms = updates.RemoteMechanisms
-		dataplane.LocalMechanisms = updates.LocalMechanisms
-		dataplane.MechanismsConfigured = true
 	}
 }
 
@@ -127,7 +138,9 @@ func (r *dataplaneRegistrarServer) RequestDataplaneRegistration(ctx context.Cont
 	// Starting per dataplane go routine which will open grpc client connection on dataplane advertised socket
 	// and will listen for operational parameters/constraints changes and reflecting these changes in the dataplane
 	// object.
-	go dataplaneMonitor(r.model, req.DataplaneName)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.dataplanes[req.DataplaneName] = cancel
+	go dataplaneMonitor(r, req.DataplaneName, ctx)
 
 	return &dataplaneregistrarapi.DataplaneRegistrationReply{Registered: true}, nil
 }
@@ -181,8 +194,13 @@ func (dataplaneRegistrarServer *dataplaneRegistrarServer) startDataplaneRegistra
 }
 
 func (dataplaneRegistrarServer *dataplaneRegistrarServer) Stop() {
+	for _, dpCancel := range dataplaneRegistrarServer.dataplanes {
+		dpCancel()
+	}
+	logrus.Infof("Close dataplane monitors")
 	dataplaneRegistrarServer.grpcServer.GracefulStop()
 	_ = dataplaneRegistrarServer.sock.Close()
+
 }
 
 // StartDataplaneRegistrarServer registers and starts gRPC server which is listening for
@@ -199,6 +217,7 @@ func StartDataplaneRegistrarServer(model model.Model) (*dataplaneRegistrarServer
 		grpcServer:                   server,
 		dataplaneRegistrarSocketPath: path.Join(DataplaneRegistrarSocketBaseDir, DataplaneRegistrarSocket),
 		model:                        model,
+		dataplanes: map[string]context.CancelFunc{},
 	}
 
 	var err error

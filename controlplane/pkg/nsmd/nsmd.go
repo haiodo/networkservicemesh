@@ -62,6 +62,7 @@ type nsmServer struct {
 	xconManager               *services.ClientConnectionManager
 	monitorCrossConnectServer monitor_crossconnect.MonitorServer
 	monitorConnectionServer   remote.MonitorServer
+	monitorCrossConnectClient *NsmMonitorCrossConnectClient
 }
 
 func (nsm *nsmServer) XconManager() *services.ClientConnectionManager {
@@ -300,6 +301,9 @@ func (nsm *nsmServer) Stop() {
 	if nsm.regServer != nil {
 		nsm.regServer.Stop()
 	}
+	if nsm.monitorCrossConnectClient != nil {
+		nsm.monitorCrossConnectClient.Cleanup()
+	}
 }
 
 func StartNSMServer(model model.Model, manager nsm.NetworkServiceManager, serviceRegistry serviceregistry.ServiceRegistry, apiRegistry serviceregistry.ApiRegistry) (NSMServer, error) {
@@ -368,8 +372,8 @@ func (nsm *nsmServer) initMonitorServers() {
 	// Start Connection monitor server
 	nsm.monitorConnectionServer = remote.NewMonitorServer(nsm.xconManager)
 	// Register CrossConnect monitorCrossConnectServer client as ModelListener
-	monitorCrossConnectClient := NewMonitorCrossConnectClient(nsm.monitorCrossConnectServer, nsm.monitorConnectionServer, nsm.xconManager)
-	nsm.model.AddListener(monitorCrossConnectClient)
+	nsm.monitorCrossConnectClient = NewMonitorCrossConnectClient(nsm.monitorCrossConnectServer, nsm.monitorConnectionServer, nsm.xconManager)
+	nsm.model.AddListener(nsm.monitorCrossConnectClient)
 }
 
 func (nsm *nsmServer) StartDataplaneRegistratorServer() error {
