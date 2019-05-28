@@ -2,7 +2,7 @@ version: 1.0
 root: "./.tests/cloud_test/"
 providers:
   - name: "GKE"
-    kind: "gke"
+    kind: "shell"
     instances: 1
     average-start-time: 5
     average-shutdown-time: 5
@@ -11,7 +11,7 @@ providers:
     parameters:
       GCLOUD_SERVICE_KEY: $GCLOUD_SERVICE_KEY
   - name: "Kind"
-    kind: "generic"
+    kind: "shell"
     instances: 1
     average-start-time: 5
     average-shutdown-time: 5
@@ -25,7 +25,7 @@ providers:
       stop: make kind-stop
       config: ~/.kube/config
   - name: "Vagrant"
-    kind: "generic"
+    kind: "shell"
     instances: 1
     average-start-time: 5
     average-shutdown-time: 5

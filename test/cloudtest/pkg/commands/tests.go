@@ -21,6 +21,7 @@ const (
 
 type TestEntry struct {
 	Name string		// Test name
+	Tags string	// A list of tags
 	ExecutionConfig *config.ExecutionConfig
 	Execution []struct {
 		Cluster *providers.ClusterInstance
@@ -35,16 +36,45 @@ type TestEntry struct {
 func GetTestConfiguration(manager execmanager.ExecutionManager, root string, tags []string) ([]*TestEntry, error) {
 	gotestCmd := []string{"go", "test", root, "--list", ".*"}
 	if len(tags) > 0 {
-		gotestCmd = append(gotestCmd, "-tags", strings.Join(tags, " "))
+		result := []*TestEntry{}
+		for _, tag := range tags {
+			gotestCmd = append(gotestCmd, "-tags", tag)
+			tests, err := getTests(manager, gotestCmd, tag)
+			if err != nil {
+				return nil, err
+			}
+			result = append( result, tests... )
+		}
+		return result, nil
+	} else {
+		return getTests(manager, gotestCmd, "")
 	}
+}
+
+func getTests(manager execmanager.ExecutionManager, gotestCmd []string, tag string) ([]*TestEntry, error) {
 	st := time.Now()
 	result, err := utils.ExecRead(context.Background(), gotestCmd )
 	if err != nil {
 		logrus.Errorf("Error getting list of tests %v", err)
 	}
 
+	var testResult []*TestEntry
+
 	manager.AddLog("gotest", "find-tests", strings.Join(result, "\n"))
+	for _, testLine := range result {
+		if strings.ContainsAny(testLine, "\t") {
+			special := strings.Split(testLine, "\t")
+			if len(special) == 3 {
+				// This is special case.
+			}
+		} else {
+			testResult = append( testResult, &TestEntry{
+				Name: strings.TrimSpace(testLine),
+				Tags: tag,
+			})
+		}
+	}
 
 	logrus.Infof("Tests found: %v Elapsed: %v", len(result), time.Since(st))
-	return nil, nil
+	return testResult, nil
 }

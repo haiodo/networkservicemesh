@@ -2,8 +2,7 @@ package execmanager
 
 import (
 	"fmt"
-	"github.com/sirupsen/logrus"
-	"os"
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
 	"path"
 	"sync"
 )
@@ -11,6 +10,7 @@ import (
 type ExecutionManager interface {
 	AddTestLog(category, clusterName, testName, operation, content string)
 	AddLog(category, operationName, content string)
+	GetRoot(root string) string
 }
 
 type executionManagerImpl struct {
@@ -25,7 +25,7 @@ type executionManagerImpl struct {
 func (mgr *executionManagerImpl) AddTestLog(category, clusterName, testName, operation, content string) {
 	mgr.Lock()
 	defer mgr.Unlock()
-	mgr.writeFile(path.Join(category, clusterName, testName), fmt.Sprintf("%s.log",operation), content)
+	utils.WriteFile(mgr.root, path.Join(category, clusterName, testName), fmt.Sprintf("%s.log",operation), content)
 }
 
 func (mgr *executionManagerImpl) AddLog(category, operationName, content string) {
@@ -33,40 +33,31 @@ func (mgr *executionManagerImpl) AddLog(category, operationName, content string)
 	defer mgr.Unlock()
 	mgr.step++
 
-	mgr.writeFile(category, fmt.Sprintf("%v-%s.log", mgr.step, operationName), content)
+	utils.WriteFile(mgr.root, category, fmt.Sprintf("%v-%s.log", mgr.step, operationName), content)
 }
 
-func (mgr *executionManagerImpl) writeFile(rootFolder, operation, content string) {
-	// Create folder if it doesn't exists
-	rootFolder = path.Join(mgr.root, rootFolder)
-	if _, err := os.Stat(rootFolder); os.IsNotExist(err) {
-		_ = os.MkdirAll(rootFolder, os.ModePerm)
+func (mgr *executionManagerImpl) GetRoot(root string) string {
+	mgr.Lock()
+	defer mgr.Unlock()
+	initPath := path.Join(mgr.root, root)
+	if !utils.FolderExists(initPath) {
+		utils.CreateFolders(initPath)
+		return initPath
+	} else {
+		index := 2
+		for {
+			initPath := path.Join(mgr.root, fmt.Sprintf("%s-%d", root, index))
+			if !utils.FolderExists(initPath) {
+				utils.CreateFolders(initPath)
+				return initPath
+			}
+			index++
+		}
 	}
-	fileName := path.Join(rootFolder, operation)
-
-	f, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm )
-	if err != nil {
-		logrus.Errorf("Failed to write file:  %s %v", fileName, err)
-		return
-	}
-	_, err = f.WriteString(content)
-	if err != nil {
-		logrus.Errorf("Failed to write content to file, %v", err)
-	}
-	_ = f.Close()
 }
 
 func NewExecutionManager(root string) ExecutionManager {
-	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		logrus.Infof("Cleaning report folder %s", root)
-
-		_ = os.RemoveAll(root)
-	}
-	// Create folder, since we delete is already.
-	err := os.MkdirAll(root, os.ModePerm)
-	if err != nil {
-		logrus.Errorf("")
-	}
+	utils.ClearFolder(root)
 	return &executionManagerImpl{
 		root: root,
 		step: 0,

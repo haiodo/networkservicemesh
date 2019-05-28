@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"
@@ -37,6 +39,17 @@ var cmdArguments *Arguments = &Arguments{
 	clusters:       []string{},
 }
 
+type clustersGroup struct {
+	instances []providers.ClusterInstance
+	provider  providers.ClusterProvider
+	config    *config.ClusterProviderConfig
+}
+
+type testTask struct {
+	test    *TestEntry
+	cluster *clustersGroup
+}
+
 func CloudTestRun(cmd *cobra.Command, args []string) {
 	var configFileContent []byte
 	var err error
@@ -59,6 +72,66 @@ func CloudTestRun(cmd *cobra.Command, args []string) {
 
 	manager := execmanager.NewExecutionManager(cloudTestConfig.ConfigRoot)
 
+	clusters := createClusters(manager, cloudTestConfig)
+
+	if len(clusters) == 0 {
+		logrus.Errorf("There is no clusters defined. Exiting...")
+		os.Exit(1)
+	}
+
+	// Collect tests
+	logrus.Infof("Finding tests")
+	tests := findTests(manager)
+
+	if len(tests) == 0 {
+		logrus.Errorf("There is no tests defined. Exiting...")
+	}
+
+	tasks := []*testTask{}
+	running := []*testTask{}
+	completed := []*testTask{}
+
+	// Fill tasks to be executed..
+	for _, test := range tests {
+		for _, cluster := range clusters {
+			if (len(test.ExecutionConfig.ClusterSelector) > 0 && utils.Contains(test.ExecutionConfig.ClusterSelector, cluster.config.Name)) ||
+				len(test.ExecutionConfig.ClusterSelector) == 0 {
+				// Cluster selector is defined we need to add tasks for individual cluster only
+				tasks = append(tasks, &testTask{
+					test:    test,
+					cluster: cluster,
+				})
+			}
+		}
+	}
+
+	operationChannel := make(chan *testTask, 1)
+	clusterCreateChannel := make(chan providers.ClusterInstance, 1)
+
+
+	logrus.Infof("Starting test execution")
+	for len(tasks) > 0 && len(running) > 0 {
+		// WE take 1 test task from list and do execution.
+
+		if len(tasks) > 0 {
+			// Lets check if we have cluster required and start it
+			
+		}
+
+		select {
+		case jobDone := <-operationChannel:
+			logrus.Infof("Tasks completed %v", jobDone)
+		case startedInstance := <-clusterCreateChannel:
+			logrus.Infof("CLuster instance are created %v", startedInstance)
+		}
+	}
+	logrus.Infof("Completed tasks %v", len(completed))
+}
+
+func createClusters(manager execmanager.ExecutionManager, testConfig config.CloudTestConfig) []*clustersGroup {
+	clusters := []*clustersGroup{}
+	clusterProviders := createClusterProviders(manager)
+
 	for _, cl := range cloudTestConfig.Providers {
 		for _, cc := range cmdArguments.clusters {
 			if cl.Name == cc {
@@ -70,12 +143,31 @@ func CloudTestRun(cmd *cobra.Command, args []string) {
 		}
 		if cl.Enabled {
 			logrus.Infof("Initialize provider for config:: %v %v", cl.Name, cl.Kind)
+			if provider, ok := clusterProviders[cl.Kind]; !ok {
+				logrus.Errorf("Cluster provider %s are not found...", cl.Kind)
+				os.Exit(1)
+			} else {
+				instances := []providers.ClusterInstance{}
+				for i := 0; i < cl.Instances; i++ {
+					cluster, err := provider.CreateCluster(&cl)
+					if err != nil {
+						logrus.Errorf("Failed to create cluster instance. Error %v", err)
+						os.Exit(1)
+					}
+					instances = append(instances, cluster)
+				}
+				clusters = append(clusters, &clustersGroup{
+					provider:  provider,
+					instances: instances,
+					config:    &cl,
+				})
+			}
 		}
 	}
+	return clusters
+}
 
-	logrus.Infof("Finding tests")
-
-	// Collect executions and associate clusters
+func findTests(manager execmanager.ExecutionManager) []*TestEntry {
 	var tests []*TestEntry
 	for _, exec := range cloudTestConfig.Executions {
 		execTests, err := GetTestConfiguration(manager, exec.PackageRoot, exec.Tags)
@@ -84,8 +176,20 @@ func CloudTestRun(cmd *cobra.Command, args []string) {
 		}
 		tests = append(tests, execTests...)
 	}
-
 	logrus.Infof("Total tests found: %v", len(tests))
+	return tests
+}
+
+func createClusterProviders(manager execmanager.ExecutionManager) map[string]providers.ClusterProvider {
+	clusterProviders := map[string]providers.ClusterProvider{}
+	for key, factory := range providers.ClusterProviderFactories {
+		if _, ok := clusterProviders[key]; ok {
+			logrus.Errorf("Re-definition of cluster provider... Exiting")
+			os.Exit(1)
+		}
+		clusterProviders[key] = factory(manager.GetRoot(key))
+	}
+	return clusterProviders
 }
 
 func ExecuteCloudTest() {
