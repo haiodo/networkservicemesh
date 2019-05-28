@@ -1,4 +1,4 @@
-package commands
+package utils
 
 import (
 	"bufio"
@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"io"
 	"os/exec"
+	"strings"
 )
 
 type proc struct {
@@ -16,19 +17,19 @@ type proc struct {
 	stderr io.ReadCloser
 }
 
-func ExecRead( ctx context.Context, args []string) (string, error) {
+func ExecRead( ctx context.Context, args []string) ([]string, error) {
 	proc, error := ExecProc(ctx, args)
 	if error != nil {
-		return "", error
+		return nil, error
 	}
-	output := ""
+	output := []string{}
 	reader := bufio.NewReader(proc.stdout)
 	for {
 		s, err := reader.ReadString('\n')
 		if err != nil {
 			break
 		}
-		output += s + "\n"
+		output = append(output, strings.TrimSpace(s))
 	}
 	return output, nil
 }

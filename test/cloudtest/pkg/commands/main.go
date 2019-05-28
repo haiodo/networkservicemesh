@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"
@@ -56,6 +57,8 @@ func CloudTestRun(cmd *cobra.Command, args []string) {
 	}
 	logrus.Infof("Configuration file loaded successfully...")
 
+	manager := execmanager.NewExecutionManager(cloudTestConfig.ConfigRoot)
+
 	for _, cl := range cloudTestConfig.Providers {
 		for _, cc := range cmdArguments.clusters {
 			if cl.Name == cc {
@@ -72,6 +75,17 @@ func CloudTestRun(cmd *cobra.Command, args []string) {
 
 	logrus.Infof("Finding tests")
 
+	// Collect executions and associate clusters
+	var tests []*TestEntry
+	for _, exec := range cloudTestConfig.Executions {
+		execTests, err := GetTestConfiguration(manager, exec.PackageRoot, exec.Tags)
+		if err != nil {
+			logrus.Errorf("Failed during test lookup %v", err)
+		}
+		tests = append(tests, execTests...)
+	}
+
+	logrus.Infof("Total tests found: %v", len(tests))
 }
 
 func ExecuteCloudTest() {

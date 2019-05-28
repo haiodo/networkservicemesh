@@ -12,6 +12,9 @@ type ClusterInstance interface {
 	// Destroy cluster
 	// Should destroy cluster with timeout passed, if time is left should report about error.
 	Destroy(timeout time.Time) error
+
+	// Return root folder to store test artifacts associated with this cluster
+	GetRoot() string
 }
 
 type ClusterProvider interface {
