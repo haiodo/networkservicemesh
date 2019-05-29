@@ -39,8 +39,23 @@ var cmdArguments *Arguments = &Arguments{
 	clusters:       []string{},
 }
 
+type clusterState byte
+
+const (
+	clusterAdded clusterState = 0
+	clusterStarting clusterState = 1
+	clusterStarted clusterState = 2
+	clusterBusy clusterState = 3
+	clusterCashed clusterState = 4
+	clusterShutdown clusterState = 5
+)
+
+type clusterInstance struct {
+	instance providers.ClusterInstance
+	state clusterState
+}
 type clustersGroup struct {
-	instances []providers.ClusterInstance
+	instances []*clusterInstance
 	provider  providers.ClusterProvider
 	config    *config.ClusterProviderConfig
 }
@@ -108,14 +123,22 @@ func CloudTestRun(cmd *cobra.Command, args []string) {
 	operationChannel := make(chan *testTask, 1)
 	clusterCreateChannel := make(chan providers.ClusterInstance, 1)
 
-
 	logrus.Infof("Starting test execution")
 	for len(tasks) > 0 && len(running) > 0 {
 		// WE take 1 test task from list and do execution.
 
 		if len(tasks) > 0 {
 			// Lets check if we have cluster required and start it
-			
+			task := tasks[0]
+		 	tasks = tasks[1:]
+
+		 	// Check if we have cluster we could assign.
+		 	for _, ci := range task.cluster.instances {
+		 		if ci.state == clusterAdded {
+		 			
+				}
+			}
+
 		}
 
 		select {
@@ -147,14 +170,17 @@ func createClusters(manager execmanager.ExecutionManager, testConfig config.Clou
 				logrus.Errorf("Cluster provider %s are not found...", cl.Kind)
 				os.Exit(1)
 			} else {
-				instances := []providers.ClusterInstance{}
+				instances := []*clusterInstance{}
 				for i := 0; i < cl.Instances; i++ {
 					cluster, err := provider.CreateCluster(&cl)
 					if err != nil {
 						logrus.Errorf("Failed to create cluster instance. Error %v", err)
 						os.Exit(1)
 					}
-					instances = append(instances, cluster)
+					instances = append(instances, &clusterInstance{
+						instance: cluster,
+						state: clusterAdded,
+					})
 				}
 				clusters = append(clusters, &clustersGroup{
 					provider:  provider,
