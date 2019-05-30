@@ -15,19 +15,16 @@ type ClusterInstance interface {
 	GetClusterConfig() (string, error)
 
 	// Perform startup of cluster
-	Start( manager execmanager.ExecutionManager, timeout time.Time ) error
+	Start( manager execmanager.ExecutionManager, timeout time.Duration ) error
 	// Destroy cluster
 	// Should destroy cluster with timeout passed, if time is left should report about error.
-	Destroy(manager execmanager.ExecutionManager, timeout time.Time) error
+	Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error
 
 	// Return root folder to store test artifacts associated with this cluster
 	GetRoot() string
 
 	// Is cluster is running right now
 	IsRunning() bool
-
-	// Is cluster is starting right now
-	IsStarting() bool
 }
 
 type ClusterProvider interface {

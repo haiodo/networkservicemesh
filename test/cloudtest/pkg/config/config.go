@@ -4,8 +4,8 @@ type ClusterProviderConfig struct {
 	Name string `yaml:"name"`	// name of provider, GKE, Azure, etc.
 	Kind string `yaml:"kind"`	// register provider type, 'generic', 'gke', etc.
 	Instances int `yaml:"instances"` // Number of required instances, executions will be split between instances.
-	AverageStartTime int `yaml:"average-start-time"` // Average time to start one instance
-	AverageShutdownTime int `yaml:"average-shutdown-time"` // Average time to start one instance
+	AverageStartTime int64 `yaml:"average-start-time"` // Average time to start one instance
+	AverageShutdownTime int64 `yaml:"average-shutdown-time"` // Average time to start one instance
 	Timeout int `yaml:"timeout"`	// Timeout for start, stop
 	RetryCount int `yaml:"retry"` // A count of start retrying steps.
 	Enabled bool `yaml:"enabled"` // Is it enabled by default or not
@@ -33,5 +33,5 @@ type CloudTestConfig struct {
 	} `yaml:"reporting"`
 
 	Executions []ExecutionConfig `yaml:"executions"`
-	Timeout int `yaml:"timeout"` // Global timeout in minutes
+	Timeout int64 `yaml:"timeout"` // Global timeout in minutes
 }

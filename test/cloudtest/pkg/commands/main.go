@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
+	"time"
 )
 
 const (
@@ -44,15 +45,17 @@ type clusterState byte
 const (
 	clusterAdded clusterState = 0
 	clusterStarting clusterState = 1
-	clusterStarted clusterState = 2
-	clusterBusy clusterState = 3
+	clusterReady clusterState = 2
+	clusterBudy clusterState = 3
 	clusterCashed clusterState = 4
 	clusterShutdown clusterState = 5
 )
 
 type clusterInstance struct {
-	instance providers.ClusterInstance
-	state clusterState
+	instance    providers.ClusterInstance
+	state       clusterState
+	startFailed int
+	task        *testTask
 }
 type clustersGroup struct {
 	instances []*clusterInstance
@@ -61,8 +64,18 @@ type clustersGroup struct {
 }
 
 type testTask struct {
-	test    *TestEntry
-	cluster *clustersGroup
+	test       *TestEntry
+	cluster    *clustersGroup
+}
+
+type executionContext struct {
+	manager          execmanager.ExecutionManager
+	clusters         []*clustersGroup
+	operationChannel chan *testTask
+	tests            []*TestEntry
+	tasks            []*testTask
+	running          []*testTask
+	completed        []*testTask
 }
 
 func CloudTestRun(cmd *cobra.Command, args []string) {
@@ -85,75 +98,110 @@ func CloudTestRun(cmd *cobra.Command, args []string) {
 	}
 	logrus.Infof("Configuration file loaded successfully...")
 
-	manager := execmanager.NewExecutionManager(cloudTestConfig.ConfigRoot)
+	context := &executionContext {
+		manager: execmanager.NewExecutionManager(cloudTestConfig.ConfigRoot),
+	}
 
-	clusters := createClusters(manager, cloudTestConfig)
+	// Create cluster instance handles
+	context.createClusters(cloudTestConfig)
 
-	if len(clusters) == 0 {
+	if len(context.clusters) == 0 {
 		logrus.Errorf("There is no clusters defined. Exiting...")
 		os.Exit(1)
 	}
 
 	// Collect tests
 	logrus.Infof("Finding tests")
-	tests := findTests(manager)
+	context.tests = findTests(context.manager)
 
-	if len(tests) == 0 {
+	if len(context.tests) == 0 {
 		logrus.Errorf("There is no tests defined. Exiting...")
 	}
 
-	tasks := []*testTask{}
-	running := []*testTask{}
-	completed := []*testTask{}
+	context.tasks = []*testTask{}
+	context.running = []*testTask{}
+	context.completed = []*testTask{}
 
 	// Fill tasks to be executed..
-	for _, test := range tests {
-		for _, cluster := range clusters {
+	context.createTasks()
+
+	context.operationChannel = make(chan *testTask, 1)
+
+	logrus.Infof("Starting test execution")
+	for len(context.tasks) > 0 && len(context.running) > 0 {
+		// WE take 1 test task from list and do execution.
+
+		if len(context.tasks) > 0 {
+			// Lets check if we have cluster required and start it
+			// Check if we have cluster we could assign.
+
+			for idx, task := range context.tasks {
+
+				// Check if we have cluster available for running task.
+				for _, ci := range task.cluster.instances {
+					if ci.task == nil {
+						// No task is assigned for cluster.
+						switch ci.state {
+						case clusterAdded, clusterCashed:
+							context.startCluster(ci, task)
+						case clusterReady:
+							// We could assign task and start it running.
+							ci.task = task
+							// We need to remove task from list
+							context.tasks = append(context.tasks[:idx], context.tasks[idx+1:]...)
+							context.startTask(task, ci)
+						}
+					}
+				}
+			}
+		}
+
+		select {
+		case jobDone := <-context.operationChannel:
+			logrus.Infof("Tasks completed %v", jobDone)
+		}
+	}
+	logrus.Infof("Completed tasks %v", len(context.completed))
+}
+
+func (context *executionContext) createTasks() {
+	for _, test := range context.tests {
+		for _, cluster := range context.clusters {
 			if (len(test.ExecutionConfig.ClusterSelector) > 0 && utils.Contains(test.ExecutionConfig.ClusterSelector, cluster.config.Name)) ||
 				len(test.ExecutionConfig.ClusterSelector) == 0 {
 				// Cluster selector is defined we need to add tasks for individual cluster only
-				tasks = append(tasks, &testTask{
+				context.tasks = append(context.tasks, &testTask{
 					test:    test,
 					cluster: cluster,
 				})
 			}
 		}
 	}
-
-	operationChannel := make(chan *testTask, 1)
-	clusterCreateChannel := make(chan providers.ClusterInstance, 1)
-
-	logrus.Infof("Starting test execution")
-	for len(tasks) > 0 && len(running) > 0 {
-		// WE take 1 test task from list and do execution.
-
-		if len(tasks) > 0 {
-			// Lets check if we have cluster required and start it
-			task := tasks[0]
-		 	tasks = tasks[1:]
-
-		 	// Check if we have cluster we could assign.
-		 	for _, ci := range task.cluster.instances {
-		 		if ci.state == clusterAdded {
-		 			
-				}
-			}
-
-		}
-
-		select {
-		case jobDone := <-operationChannel:
-			logrus.Infof("Tasks completed %v", jobDone)
-		case startedInstance := <-clusterCreateChannel:
-			logrus.Infof("CLuster instance are created %v", startedInstance)
-		}
-	}
-	logrus.Infof("Completed tasks %v", len(completed))
 }
 
-func createClusters(manager execmanager.ExecutionManager, testConfig config.CloudTestConfig) []*clustersGroup {
-	clusters := []*clustersGroup{}
-	clusterProviders := createClusterProviders(manager)
+func (context *executionContext) startTask(task *testTask, instance *clusterInstance) {
+	
+}
+
+func (context *executionContext) startCluster(ci *clusterInstance, task *testTask) {
+	ci.state = clusterStarting
+	ci.task = task
+	go func() {
+		err := ci.instance.Start(context.manager, time.Second*time.Duration(task.cluster.config.AverageStartTime*2))
+		if err != nil {
+			logrus.Infof("Failed to start cluster instance. Retrying...")
+			ci.startFailed++
+			ci.state = clusterCashed
+		} else {
+			ci.state = clusterReady
+		}
+		context.operationChannel <- task
+	}()
+}
+
+func (context *executionContext) createClusters(testConfig config.CloudTestConfig) {
+	context.clusters = []*clustersGroup{}
+	clusterProviders := createClusterProviders(context.manager)
 
 	for _, cl := range cloudTestConfig.Providers {
 		for _, cc := range cmdArguments.clusters {
@@ -182,7 +230,7 @@ func createClusters(manager execmanager.ExecutionManager, testConfig config.Clou
 						state: clusterAdded,
 					})
 				}
-				clusters = append(clusters, &clustersGroup{
+				context.clusters = append(context.clusters, &clustersGroup{
 					provider:  provider,
 					instances: instances,
 					config:    &cl,
@@ -190,7 +238,6 @@ func createClusters(manager execmanager.ExecutionManager, testConfig config.Clou
 			}
 		}
 	}
-	return clusters
 }
 
 func findTests(manager execmanager.ExecutionManager) []*TestEntry {

@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
 	"path"
@@ -38,6 +39,10 @@ type shellInstance struct {
 	shutdownScript []string
 }
 
+func (si *shellInstance) IsRunning() bool {
+	return si.started
+}
+
 func (si *shellInstance) GetClusterConfig() (string, error) {
 	if si.started {
 		return si.configLocation, nil
@@ -45,10 +50,10 @@ func (si *shellInstance) GetClusterConfig() (string, error) {
 	return "", fmt.Errorf("Cluster is not started yet...")
 }
 
-func (si *shellInstance) Start(timeout time.Time) error {
+func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout time.Duration) error {
 	panic("implement me")
 }
-func (si *shellInstance) Destroy(timeout time.Time) error {
+func (si *shellInstance) Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error {
 	panic("implement me")
 }
 
