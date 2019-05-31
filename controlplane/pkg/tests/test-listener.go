@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -15,7 +16,8 @@ const (
 )
 
 type testConnectionModelListener struct {
-	model.ModelListenerImpl
+	sync.RWMutex
+	model.ListenerImpl
 	additions int
 	updates   int
 	deletions int
@@ -27,27 +29,42 @@ type testConnectionModelListener struct {
 }
 
 func (impl *testConnectionModelListener) ClientConnectionAdded(clientConnection *model.ClientConnection) {
+	impl.Lock()
+	defer impl.Unlock()
+
 	impl.additions++
-	impl.connections[clientConnection.GetId()] = clientConnection
+	impl.connections[clientConnection.GetID()] = clientConnection
 	logrus.Infof("ClientConnectionAdded: %v", clientConnection)
 }
 
 func (impl *testConnectionModelListener) ClientConnectionDeleted(clientConnection *model.ClientConnection) {
+	impl.Lock()
+	defer impl.Unlock()
+
 	impl.deletions++
 	logrus.Infof("ClientConnectionDeleted: %v", clientConnection)
-	delete(impl.connections, clientConnection.GetId())
+	delete(impl.connections, clientConnection.GetID())
 }
 
-func (impl *testConnectionModelListener) ClientConnectionUpdated(clientConnection *model.ClientConnection) {
+func (impl *testConnectionModelListener) ClientConnectionUpdated(old, new *model.ClientConnection) {
+	impl.Lock()
+	defer impl.Unlock()
+
 	impl.updates++
-	impl.connections[clientConnection.GetId()] = clientConnection
-	logrus.Infof("ClientConnectionUpdated: %s %v", clientConnection.GetId(), impl.textMarshaler.Text(clientConnection.Xcon))
+	impl.connections[new.GetID()] = new
+	logrus.Infof("ClientConnectionUpdated: %s %v", new.GetID(), impl.textMarshaler.Text(new.Xcon))
 }
 
 func (impl *testConnectionModelListener) EndpointAdded(endpoint *model.Endpoint) {
+	impl.Lock()
+	defer impl.Unlock()
+
 	impl.endpoints++
 }
 func (impl *testConnectionModelListener) EndpointDeleted(endpoint *model.Endpoint) {
+	impl.Lock()
+	defer impl.Unlock()
+
 	impl.endpoints--
 }
 
