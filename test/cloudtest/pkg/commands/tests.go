@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
-	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
 	"github.com/sirupsen/logrus"
 	"strings"
@@ -17,19 +16,22 @@ const (
 	Status_SUCCESS Status = 0
 	// Failed execution on all clusters
 	Status_FAILED Status = 1
+	// Test timeout waiting for results
+	Status_TIMEOUT Status = 2
 )
 
+type TestEntryExecution struct {
+	OutputFile string	// Output file name
+	retry int	// Did we retry execution on this cluster.
+	Status Status	// Execution status
+}
 type TestEntry struct {
 	Name string		// Test name
 	Tags string	// A list of tags
 	ExecutionConfig *config.ExecutionConfig
-	Execution []struct {
-		Cluster *providers.ClusterInstance
-		OutputFile string	// Output file name
-		retry int	// Did we retry execution on this cluster.
-		Status Status	// Execution status
-		Output string	// Output file name
-	}
+	Status Status
+
+	Executions []TestEntryExecution
 }
 
 // Return list of available tests by calling of gotest --list .* $root -tag "" and parsing of output.
@@ -38,11 +40,11 @@ func GetTestConfiguration(manager execmanager.ExecutionManager, root string, tag
 	if len(tags) > 0 {
 		result := []*TestEntry{}
 		for _, tag := range tags {
-			gotestCmd = append(gotestCmd, "-tags", tag)
-			tests, err := getTests(manager, gotestCmd, tag)
+			tests, err := getTests(manager, append(gotestCmd, "-tags", tag), tag)
 			if err != nil {
 				return nil, err
 			}
+			logrus.Infof("Found %d tests with tags %s", len(tests), tag)
 			result = append( result, tests... )
 		}
 		return result, nil
@@ -60,7 +62,7 @@ func getTests(manager execmanager.ExecutionManager, gotestCmd []string, tag stri
 
 	var testResult []*TestEntry
 
-	manager.AddLog("gotest", "find-tests", strings.Join(result, "\n"))
+	manager.AddLog("gotest", "find-tests", strings.Join(gotestCmd, " ") + "\n" + strings.Join(result, "\n"))
 	for _, testLine := range result {
 		if strings.ContainsAny(testLine, "\t") {
 			special := strings.Split(testLine, "\t")

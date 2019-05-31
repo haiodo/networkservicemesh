@@ -30,7 +30,7 @@ providers:
     average-start-time: 5
     average-shutdown-time: 5
     retry: 3
-    enabled: false
+    enabled: true
     parameters:
       start: |
         make vagrant-start
@@ -44,7 +44,7 @@ executions:
   - name: "Single cluster tests"
     tags:
       - basic
-      - recovery
+      - recover
       - usecase
     root: ./test/integration
     timeout: 5

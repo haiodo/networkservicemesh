@@ -6,6 +6,7 @@ import (
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
+	"github.com/sirupsen/logrus"
 	"path"
 	"strconv"
 	"strings"
@@ -15,9 +16,9 @@ import (
 
 const (
 	ShellConfigLocation = "config"
-	ShellStartScript = "start"
-	ShellShutdownScript = "shutdown"
-	ShellKeepAlive	= "keep-alive"
+	ShellStartScript    = "start"
+	ShellStopScript     = "stop"
+	ShellKeepAlive      = "keep-alive"
 )
 
 type shellProvider struct {
@@ -36,7 +37,7 @@ type shellInstance struct {
 	keepAlive      bool
 	configLocation string
 	startScript    []string
-	shutdownScript []string
+	stopScript []string
 }
 
 func (si *shellInstance) IsRunning() bool {
@@ -51,14 +52,16 @@ func (si *shellInstance) GetClusterConfig() (string, error) {
 }
 
 func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout time.Duration) error {
-	panic("implement me")
+	logrus.Infof("Starting cluster %s-%s", si.config.Name + si.id)
+	return nil
 }
 func (si *shellInstance) Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error {
-	panic("implement me")
+	logrus.Infof("Destroy cluster %s-%s", si.config.Name + si.id)
+	return nil
 }
 
-func (*shellInstance) GetRoot() string {
-	panic("implement me")
+func (si *shellInstance) GetRoot() string {
+	return si.root
 }
 
 func (p *shellProvider) CreateCluster(config *config.ClusterProviderConfig) (providers.ClusterInstance, error) {
@@ -77,7 +80,7 @@ func (p *shellProvider) CreateCluster(config *config.ClusterProviderConfig) (pro
 		config: config,
 		configLocation: config.Parameters[ShellConfigLocation],
 		startScript: p.parseScript(config.Parameters[ShellStartScript]),
-		shutdownScript: p.parseScript(config.Parameters[ShellShutdownScript]),
+		stopScript: p.parseScript(config.Parameters[ShellStopScript]),
 	}
 
 	if value, err := strconv.ParseBool(config.Parameters[ShellKeepAlive]); err == nil {
@@ -88,6 +91,7 @@ func (p *shellProvider) CreateCluster(config *config.ClusterProviderConfig) (pro
 }
 
 func init() {
+	logrus.Infof("Adding shell as supported providers...")
 	providers.ClusterProviderFactories["shell"] = NewShellClusterProvider
 }
 
@@ -107,7 +111,7 @@ func (p *shellProvider) ValidateConfig(config *config.ClusterProviderConfig) err
 	if _, ok := config.Parameters[ShellStartScript]; !ok {
 		return fmt.Errorf("Invalid start script")
 	}
-	if _, ok := config.Parameters[ShellShutdownScript]; !ok {
+	if _, ok := config.Parameters[ShellStopScript]; !ok {
 		return fmt.Errorf("Invalid shutdown script location")
 	}
 	return nil
