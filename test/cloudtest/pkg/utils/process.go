@@ -6,24 +6,36 @@ import (
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 )
 
-type proc struct {
-	cmd    *exec.Cmd
+type ProcWrapper struct {
+	Cmd    *exec.Cmd
 	cancel context.CancelFunc
-	stdout io.ReadCloser
-	stderr io.ReadCloser
+	Stdout io.ReadCloser
+	Stderr io.ReadCloser
 }
 
+
+func (w* ProcWrapper) ExitCode() int {
+	st, err := w.Cmd.Process.Wait()
+	if err != nil {
+		logrus.Errorf("Error during waiting for process exit code: %v %v", w.Cmd.Args, err)
+		return -1
+	}
+	return st.ExitCode()
+}
+
+
 func ExecRead( ctx context.Context, args []string) ([]string, error) {
-	proc, error := ExecProc(ctx, args)
+	proc, error := ExecProc(ctx, args, nil)
 	if error != nil {
 		return nil, error
 	}
 	output := []string{}
-	reader := bufio.NewReader(proc.stdout)
+	reader := bufio.NewReader(proc.Stdout)
 	for {
 		s, err := reader.ReadString('\n')
 		if err != nil {
@@ -34,29 +46,28 @@ func ExecRead( ctx context.Context, args []string) ([]string, error) {
 	return output, nil
 }
 
-func ExecProc(ctx context.Context, args []string) (proc, error) {
+func ExecProc(ctx context.Context, args []string, env []string) (*ProcWrapper, error) {
 	if len(args) == 0 {
-		return proc{}, fmt.Errorf("missing command to run")
+		return &ProcWrapper{}, fmt.Errorf("missing command to run")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	p := proc{
-		cmd:    exec.CommandContext(ctx, args[0], args[1:]...),
+	p := &ProcWrapper{
+		Cmd:    exec.CommandContext(ctx, args[0], args[1:]...),
 		cancel: cancel,
 	}
-	logrus.Debugf("exec: %s", p.cmd.Args)
+	if env != nil {
+		p.Cmd.Env = append(os.Environ(), env...)
+	}
 	var err error
-	p.stdout, err = p.cmd.StdoutPipe()
+	p.Stdout, err = p.Cmd.StdoutPipe()
 	if err != nil {
 		return p, err
 	}
-	p.stderr, err = p.cmd.StderrPipe()
+	p.Stderr, err = p.Cmd.StderrPipe()
 	if err != nil {
 		return p, err
 	}
-	err = p.cmd.Start()
-	if err == nil {
-		logrus.Debugf("go test pid: %d", p.cmd.Process.Pid)
-	}
+	err = p.Cmd.Start()
 	return p, err
 }

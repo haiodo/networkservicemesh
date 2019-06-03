@@ -3,13 +3,16 @@ package execmanager
 import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
+	"os"
 	"path"
 	"sync"
 )
 
 type ExecutionManager interface {
 	AddTestLog(category, clusterName, testName, operation, content string)
+	OpenFileTest(category, clusterName, testname, operation string) (string, *os.File, error)
 	AddLog(category, operationName, content string)
+	OpenFile(category, operationName string) (string, *os.File, error)
 	GetRoot(root string) string
 }
 
@@ -25,7 +28,21 @@ type executionManagerImpl struct {
 func (mgr *executionManagerImpl) AddTestLog(category, clusterName, testName, operation, content string) {
 	mgr.Lock()
 	defer mgr.Unlock()
-	utils.WriteFile(mgr.root, path.Join(category, clusterName, testName), fmt.Sprintf("%s.log",operation), content)
+	mgr.step++
+	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s-%s.log", mgr.step, testName, clusterName, operation), content)
+}
+
+func (mgr *executionManagerImpl) OpenFile(category, operationName string) (string, *os.File, error) {
+	mgr.Lock()
+	defer mgr.Unlock()
+	mgr.step++
+	return utils.OpenFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s.log", mgr.step, operationName))
+}
+func (mgr *executionManagerImpl) OpenFileTest(category, clusterName, testName, operation string) (string, *os.File, error) {
+	mgr.Lock()
+	defer mgr.Unlock()
+	mgr.step++
+	return utils.OpenFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s-%s-%s.log", mgr.step, testName, clusterName, operation))
 }
 
 func (mgr *executionManagerImpl) AddLog(category, operationName, content string) {
@@ -33,7 +50,7 @@ func (mgr *executionManagerImpl) AddLog(category, operationName, content string)
 	defer mgr.Unlock()
 	mgr.step++
 
-	utils.WriteFile(mgr.root, category, fmt.Sprintf("%v-%s.log", mgr.step, operationName), content)
+	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s.log", mgr.step, operationName), content)
 }
 
 func (mgr *executionManagerImpl) GetRoot(root string) string {

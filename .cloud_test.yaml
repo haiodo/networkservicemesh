@@ -16,27 +16,29 @@ providers:
     average-start-time: 5
     average-shutdown-time: 5
     retry: 3
-    enabled: false
+    enabled: true
+    env:
+      - CLUSTER_RULES_PREFIX=kind
     parameters:
       start: |
         make kind-start
-        make k8s-config
-        make k8s-load-images
-      stop: make kind-stop
-      config: ~/.kube/config
+        make kind-config
+        echo make k8s-load-images -j 4
+      stop: echo make kind-stop
+      config: make kind-config-location
   - name: "Vagrant"
     kind: "shell"
     instances: 1
     average-start-time: 5
     average-shutdown-time: 5
     retry: 3
-    enabled: true
+    enabled: false
     parameters:
       start: |
         make vagrant-start
         make k8s-config
         make k8s-load-images
-      stop: make kind-stop
+      stop: make vagrant-destroy
       config: ./scripts/vagrant/.kube/config
 reporting:
   junit-report: "./.tests/junit.xml"
@@ -47,7 +49,7 @@ executions:
       - recover
       - usecase
     root: ./test/integration
-    timeout: 5
+    timeout: 300
     cluster-count: 1
     kubernetes-env:
       - KUBECONFIG

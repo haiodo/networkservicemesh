@@ -10,6 +10,7 @@ type ClusterProviderConfig struct {
 	RetryCount int `yaml:"retry"` // A count of start retrying steps.
 	Enabled bool `yaml:"enabled"` // Is it enabled by default or not
 	Parameters map[string]string `yaml:"parameters"` // A parameters specific for provider
+	Env []string `yaml:"env"` // Extra environment variables
 }
 
 type ExecutionConfig struct { // Executions, every execution execute some tests agains configured set of clusters
@@ -26,12 +27,12 @@ type ExecutionConfig struct { // Executions, every execution execute some tests 
 
 type CloudTestConfig struct {
 	Version string `yaml:"version"`		// Provider file version, 1.0
-	Providers []ClusterProviderConfig `yaml:"providers"`
+	Providers []*ClusterProviderConfig `yaml:"providers"`
 	ConfigRoot string `yaml:"root"` // A provider stored configurations root.
 	Reporting struct { // A junit report location.
 		JUnitReportFile string `yaml:"junit-report"`
 	} `yaml:"reporting"`
 
-	Executions []ExecutionConfig `yaml:"executions"`
+	Executions []*ExecutionConfig `yaml:"executions"`
 	Timeout int64 `yaml:"timeout"` // Global timeout in minutes
 }

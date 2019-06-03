@@ -6,17 +6,21 @@ import (
 	"path"
 )
 
-func WriteFile(root, rootFolder, operation, content string) {
+func OpenFile( root, fileName string) (string, *os.File, error) {
 	// Create folder if it doesn't exists
-	rootFolder = path.Join(root, rootFolder)
-	if !FolderExists(rootFolder) {
-		_ = os.MkdirAll(rootFolder, os.ModePerm)
+	if !FolderExists(root) {
+		_ = os.MkdirAll(root, os.ModePerm)
 	}
-	fileName := path.Join(rootFolder, operation)
+	fileName = path.Join(root, fileName)
 
 	f, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm )
+	return fileName, f, err
+}
+func WriteFile(root, fileName, content string) {
+	fileName, f, err := OpenFile(root, fileName)
+
 	if err != nil {
-		logrus.Errorf("Failed to write file:  %s %v", fileName, err)
+		logrus.Errorf("Failed to write file: %s %v", fileName, err)
 		return
 	}
 	_, err = f.WriteString(content)
