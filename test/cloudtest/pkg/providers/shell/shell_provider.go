@@ -98,6 +98,12 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 		_ = file.Close()
 	}()
 
+	// Let's check Kubernetes clister is alive.
+
+
+
+
+
 	return nil
 }
 func (si *shellInstance) Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error {
@@ -127,7 +133,6 @@ func (si *shellInstance) Destroy(manager execmanager.ExecutionManager, timeout t
 		_ = file.Close()
 	}()
 
-	return nil
 	return nil
 }
 

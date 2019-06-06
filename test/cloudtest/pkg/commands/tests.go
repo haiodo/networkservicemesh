@@ -18,6 +18,7 @@ const (
 	Status_FAILED Status = 1
 	// Test timeout waiting for results
 	Status_TIMEOUT Status = 2
+	Status_SKIPPED Status = 3
 )
 
 type TestEntryExecution struct {
@@ -26,12 +27,13 @@ type TestEntryExecution struct {
 	Status Status	// Execution status
 }
 type TestEntry struct {
-	Name string		// Test name
-	Tags string	// A list of tags
+	Name            string // Test name
+	Tags            string // A list of tags
 	ExecutionConfig *config.ExecutionConfig
-	Status Status
+	Status          Status
 
 	Executions []TestEntryExecution
+	Duration   time.Duration
 }
 
 // Return list of available tests by calling of gotest --list .* $root -tag "" and parsing of output.

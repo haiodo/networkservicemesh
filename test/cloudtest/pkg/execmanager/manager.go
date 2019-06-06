@@ -3,6 +3,7 @@ package execmanager
 import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
+	"github.com/sirupsen/logrus"
 	"os"
 	"path"
 	"sync"
@@ -14,6 +15,7 @@ type ExecutionManager interface {
 	AddLog(category, operationName, content string)
 	OpenFile(category, operationName string) (string, *os.File, error)
 	GetRoot(root string) string
+	AddFile(fileName string, bytes []byte)
 }
 
 type executionManagerImpl struct {
@@ -29,7 +31,24 @@ func (mgr *executionManagerImpl) AddTestLog(category, clusterName, testName, ope
 	mgr.Lock()
 	defer mgr.Unlock()
 	mgr.step++
-	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s-%s.log", mgr.step, testName, clusterName, operation), content)
+	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s-%s-%s.log", mgr.step, testName, clusterName, operation), content)
+}
+
+func (mgr *executionManagerImpl) AddFile(fileName string, bytes []byte) {
+	mgr.Lock()
+	defer mgr.Unlock()
+	mgr.step++
+	fileName, f, err := utils.OpenFile(mgr.root, fileName)
+
+	if err != nil {
+		logrus.Errorf("Failed to write file: %s %v", fileName, err)
+		return
+	}
+	_, err = f.Write(bytes)
+	if err != nil {
+		logrus.Errorf("Failed to write content to file, %v", err)
+	}
+	_ = f.Close()
 }
 
 func (mgr *executionManagerImpl) OpenFile(category, operationName string) (string, *os.File, error) {

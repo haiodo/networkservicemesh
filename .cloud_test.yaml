@@ -41,7 +41,7 @@ providers:
       stop: make vagrant-destroy
       config: ./scripts/vagrant/.kube/config
 reporting:
-  junit-report: "./.tests/junit.xml"
+  junit-report: "junit.xml"
 executions:
   - name: "Single cluster tests"
     tags:

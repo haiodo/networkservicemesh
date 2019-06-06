@@ -3,8 +3,8 @@ package reporting
 import "encoding/xml"
 
 type JUnitFile struct {
-	Name xml.Name `xml:"testsuites"`
-	Suites  []Suite
+	XMLName xml.Name `xml:"testsuites"`
+	Suites  []*Suite
 }
 
 type Suite struct {
@@ -13,8 +13,8 @@ type Suite struct {
 	Failures   int             `xml:"failures,attr"`
 	Time       string          `xml:"time,attr"`
 	Name       string          `xml:"name,attr"`
-	Properties []Property `xml:"properties>property,omitempty"`
-	TestCases  []TestCase
+	Properties []*Property `xml:"properties>property,omitempty"`
+	TestCases  []*TestCase
 }
 
 type TestCase struct {
