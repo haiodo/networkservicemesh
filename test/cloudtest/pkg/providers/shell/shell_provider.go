@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	ShellConfigScript = "config"
-	ShellStartScript  = "start"
-	ShellStopScript   = "stop"
-	ShellKeepAlive    = "keep-alive"
+	ShellConfigScript      = "config"
+	ShellStartScript       = "start"
+	ShellStartConfigScript = "start-config"
+	ShellStopScript        = "stop"
+	ShellKeepAlive         = "keep-alive"
 )
 
 type shellProvider struct {
@@ -33,17 +34,18 @@ type shellProvider struct {
 }
 
 type shellInstance struct {
-	root           string
-	id             string
-	config         *config.ClusterProviderConfig
-	started        bool
-	startFailed    int
-	keepAlive      bool
-	configLocation string
-	configScript   string
-	startScript    []string
-	stopScript     []string
-	utils *k8s.K8sUtils
+	root              string
+	id                string
+	config            *config.ClusterProviderConfig
+	started           bool
+	startFailed       int
+	keepAlive         bool
+	configLocation    string
+	configScript      string
+	startScript       []string
+	startConfigScript []string
+	stopScript        []string
+	utils             *k8s.K8sUtils
 }
 
 func (si *shellInstance) CheckIsAlive() ([]v1.Node, error) {
@@ -69,7 +71,7 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 	if err != nil {
 		return err
 	}
-	defer func() {_ = file.Close()}()
+	defer func() { _ = file.Close() }()
 
 	logrus.Infof("Starting cluster %s-%s logfile: %v", si.config.Name, si.id, fileName)
 
@@ -96,37 +98,65 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 		}
 	}
 
-	_, _ = writer.WriteString("Retriving configuation location")
+	_, _ = writer.WriteString("Retrieving configuration location\n")
 	_ = writer.Flush()
 	output, err := utils.ExecRead(context, strings.Split(si.configScript, " "))
 	if err != nil {
+		msg := fmt.Sprintf("Failed to retrieve configuration location %v", err)
+		_, _ = writer.WriteString(msg)
+		logrus.Errorf(msg)
 		return err
 	}
 	si.configLocation = output[0]
 
 	_, _ = writer.WriteString(strings.Join(output, "\n"))
 
-
 	defer func() {
 		_ = file.Close()
 	}()
 
-	_, _ = writer.WriteString("Constructing K8s client API to connect to cluster")
+	_, _ = writer.WriteString("Constructing K8s client API to connect to cluster.\n")
 
 	si.utils, err = k8s.NewK8sUtils(si.configLocation)
 	if err != nil {
-		si.doDestroy(writer, manager, timeout, err)
 		return err
 	}
 
-	nodes, err := si.utils.GetNodes()
-	if err != nil {
-		si.doDestroy(writer, manager, timeout, err)
+	requiedNodes := si.config.NodeCount
+	for {
+		nodes, err := si.utils.GetNodes()
+		if err != nil {
+			return err
+		}
+		if len(nodes) >= requiedNodes {
+			_, _ = writer.WriteString(fmt.Sprintf("Cluster started properly with nodes: %v\n", nodes))
+			break;
+		}
+		msg := fmt.Sprintf("Cluster %s doesn't have required number of nodes to be available. Required: %v Available: %v\n", si.id, requiedNodes, len(nodes))
+		logrus.Errorf(msg)
+		err = fmt.Errorf(msg)
 		return err
 	}
+
+	// Running start config script
+	for _, cmd := range si.startConfigScript {
+		if len(strings.TrimSpace(cmd)) == 0 {
+			continue
+		}
+		_, _ = writer.WriteString(fmt.Sprintf("Running: %v\n", cmd))
+		_ = writer.Flush()
+		logrus.Infof("Running: %s => %s", si.id, cmd)
+
+		si.config.Env = append(si.config.Env, "KUBECONFIG="+si.configLocation)
+
+		if err := si.runCommand(context, cmd, fileName, writer); err != nil {
+			_, _ = writer.WriteString(fmt.Sprintf("Error running command: %v\n", err))
+			_ = writer.Flush()
+			return err
+		}
+	}
+
 	si.started = true
-
-	_, _ = writer.WriteString(fmt.Sprintf("Cluster started properly with nodes: %v", nodes))
 	return nil
 }
 func (si *shellInstance) Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error {
@@ -165,7 +195,6 @@ func (si *shellInstance) GetRoot() string {
 
 func (si *shellInstance) runCommand(context context.Context, cmd, fileName string, writer *bufio.Writer) error {
 	cmdLine := strings.Split(cmd, " ")
-
 
 	proc, error := utils.ExecProc(context, cmdLine, si.config.Env)
 	if error != nil {
@@ -211,12 +240,13 @@ func (p *shellProvider) CreateCluster(config *config.ClusterProviderConfig) (pro
 	id := fmt.Sprintf("cluster-%d", p.index)
 
 	clusterInstance := &shellInstance{
-		root:         path.Join(p.root, id),
-		id:           id,
-		config:       config,
-		configScript: config.Parameters[ShellConfigScript],
-		startScript:  p.parseScript(config.Parameters[ShellStartScript]),
-		stopScript:   p.parseScript(config.Parameters[ShellStopScript]),
+		root:              path.Join(p.root, id),
+		id:                id,
+		config:            config,
+		configScript:      config.Parameters[ShellConfigScript],
+		startScript:       p.parseScript(config.Parameters[ShellStartScript]),
+		startConfigScript: p.parseScript(config.Parameters[ShellStartConfigScript]),
+		stopScript:        p.parseScript(config.Parameters[ShellStopScript]),
 	}
 
 	if value, err := strconv.ParseBool(config.Parameters[ShellKeepAlive]); err == nil {

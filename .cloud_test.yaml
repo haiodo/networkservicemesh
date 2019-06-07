@@ -6,6 +6,7 @@ providers:
     kind: "shell"
     instances: 1
     retry: 3
+    node-count: 2
     enabled: false
     timeout: 300 # 5 minutes to start cluster
     parameters:
@@ -14,32 +15,40 @@ providers:
   - name: "Kind"
     kind: "shell"
     instances: 1
-    retry: 3
+    node-count: 3
+    retry: 10
     enabled: true
     timeout: 300 # 5 minutes to start cluster
+    stop-delay: 10
     env:
       - CLUSTER_RULES_PREFIX=kind
     parameters:
       start: |
-        make kind-start
         make kind-config
-        make k8s-load-images -j 4
+        make kind-start
+        echo make k8s-load-images
       stop: make kind-stop
       config: make kind-config-location
+      start-config: make k8s-config
 
   - name: "Vagrant"
     kind: "shell"
     instances: 1
     retry: 3
-    enabled: false
+    node-count: 2
+    enabled: true
     timeout: 900 # 15 minutes to start cluster
+    env:
+      - CLUSTER_RULES_PREFIX=vagrant
+      - CONTAINER_BUILD_PREFIX=docker
+      - CONTAINER_REPO=networkservicemesh
     parameters:
       start: |
         make vagrant-start
-        make k8s-config
-        make k8s-load-images
-      stop: make vagrant-destroy
-      config: ./scripts/vagrant/.kube/config
+        echo make k8s-load-images
+      start-config: make k8s-config
+      stop: make vagrant-suspend
+      config: make vagrant-config-location
 reporting:
   junit-report: "junit.xml"
 executions:
@@ -49,7 +58,7 @@ executions:
       - recover
       - usecase
     root: ./test/integration
-    timeout: 15
+    timeout: 300
     cluster-count: 1
     kubernetes-env:
       - KUBECONFIG

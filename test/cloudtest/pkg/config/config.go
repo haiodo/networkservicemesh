@@ -6,6 +6,8 @@ type ClusterProviderConfig struct {
 	Instances int `yaml:"instances"` // Number of required instances, executions will be split between instances.
 	Timeout int `yaml:"timeout"`	// Timeout for start, stop
 	RetryCount int `yaml:"retry"` // A count of start retrying steps.
+	NodeCount int `yaml:"node-count"` // A count of nodes should be available via API to match cluster is alive.
+	StopDelay int64 `yaml:"stop-delay"` // A timeout after stop and starting of session again.
 	Enabled bool `yaml:"enabled"` // Is it enabled by default or not
 	Parameters map[string]string `yaml:"parameters"` // A parameters specific for provider
 	Env []string `yaml:"env"` // Extra environment variables
