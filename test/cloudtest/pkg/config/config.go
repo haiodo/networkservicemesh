@@ -4,8 +4,6 @@ type ClusterProviderConfig struct {
 	Name string `yaml:"name"`	// name of provider, GKE, Azure, etc.
 	Kind string `yaml:"kind"`	// register provider type, 'generic', 'gke', etc.
 	Instances int `yaml:"instances"` // Number of required instances, executions will be split between instances.
-	AverageStartTime int64 `yaml:"average-start-time"` // Average time to start one instance
-	AverageShutdownTime int64 `yaml:"average-shutdown-time"` // Average time to start one instance
 	Timeout int `yaml:"timeout"`	// Timeout for start, stop
 	RetryCount int `yaml:"retry"` // A count of start retrying steps.
 	Enabled bool `yaml:"enabled"` // Is it enabled by default or not
@@ -17,7 +15,7 @@ type ExecutionConfig struct { // Executions, every execution execute some tests 
 	Name string `yaml:"name"` // Execution name
 	Tags []string `yaml:"tags"`	// A list of tags for this configured execution.
 	PackageRoot string `yaml:"root"` // A package root for this test execution, default .
-	TestTimeout string `yaml:"timeout"` // Invidiaul test timeout, "60" passed to gotest, in seconds
+	Timeout int64 `yaml:"timeout"` // Invidiaul test timeout, "60" passed to gotest, in seconds
 	ExtraOptions []string `yaml:"extra-options"` // Extra options to pass to gotest
 	ClusterCount int `yaml:"cluster-count"` // A number of clusters required for this execution, default 1
 	KubernetesEnv []string `yaml:"kubernetes-env"` // Names of environment variables to put cluster names inside.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
-	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/k8s"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
 	_ "github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers/shell"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/reporting"
@@ -17,6 +16,7 @@ import (
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,24 +52,25 @@ type clusterState byte
 
 const (
 	clusterAdded        clusterState = 0
-	clusterStarting     clusterState = 1
-	clusterReady        clusterState = 2
-	clusterBusy         clusterState = 3
-	clusterCrashed      clusterState = 4
-	clusterNotAvailable clusterState = 5
+	clusterReady        clusterState = 1
+	clusterBusy         clusterState = 2
+	clusterCrashed      clusterState = 3
+	clusterNotAvailable clusterState = 4
 )
 
 type clusterInstance struct {
 	instance    providers.ClusterInstance
 	state       clusterState
-	startFailed int
+	startCount int
 	id          string
+	taskCancel  context.CancelFunc
 }
 type clustersGroup struct {
 	instances []*clusterInstance
 	provider  providers.ClusterProvider
 	config    *config.ClusterProviderConfig
 	tasks     []*testTask // All tasks assigned to this cluster.
+	lock sync.Mutex
 }
 
 type testTask struct {
@@ -101,6 +102,7 @@ type executionContext struct {
 	tasks            []*testTask
 	running          []*testTask
 	completed        []*testTask
+	skipped        []*testTask
 	cloudTestConfig  *config.CloudTestConfig
 	report           *reporting.JUnitFile
 }
@@ -194,18 +196,25 @@ func (ctx *executionContext) performExecution() {
 				clustersToUse := []*clusterInstance{}
 
 				// Check if we have cluster available for running task.
+
+				clustersAvailable := 0
+
 				for _, ci := range task.cluster.instances {
 					// No task is assigned for cluster.
 					switch ci.state {
 					case clusterAdded, clusterCrashed:
 						// Try starting cluster
 						ctx.startCluster(task.cluster, ci)
+						clustersAvailable++
 					case clusterReady:
 						// Check if we match requirements.
 						// We could assign task and start it running.
 						clustersToUse = append(clustersToUse, ci)
 						// We need to remove task from list
 						assigned = true
+						clustersAvailable++
+					case clusterBusy:
+						clustersAvailable++
 					}
 					if assigned {
 						// Task is scheduled
@@ -222,7 +231,13 @@ func (ctx *executionContext) performExecution() {
 					}
 				}
 				if !assigned {
-					newTasks = append(newTasks, task)
+					if clustersAvailable == 0 {
+						// We move task to skipped since, no clusters could execute it, all attempts for clusters to recover are finished.
+						task.test.Status = Status_SKIPPED_NO_CLUSTERS
+						ctx.completed = append(ctx.completed, task)
+					} else {
+						newTasks = append(newTasks, task)
+					}
 				}
 			}
 			ctx.tasks = newTasks
@@ -233,19 +248,28 @@ func (ctx *executionContext) performExecution() {
 			switch event.kind {
 			case eventClusterUpdate:
 				logrus.Infof("Instance for cluster %s is updated %v", event.cluster.config.Name, event.clusterInstance)
+				if event.clusterInstance.taskCancel != nil && event.clusterInstance.state == clusterCrashed {
+					// We have task running on cluster
+					event.clusterInstance.taskCancel()
+				}
+
 			case eventTaskUpdate:
-				if event.task.test.Status == Status_SUCCESS || event.task.test.Status == Status_FAILED {
-					ctx.completed = append(ctx.completed, event.task)
-					for _, inst := range event.task.clusterInstances {
+				// Remove from running onces.
+				for idx, t := range ctx.running {
+					if t == event.task {
+						ctx.running = append(ctx.running[:idx], ctx.running[idx+1:]...)
+						break
+					}
+				}
+				// Make cluster as ready
+				for _, inst := range event.task.clusterInstances {
+					if inst.state != clusterCrashed {
 						inst.state = clusterReady
 					}
-
-					for idx, t := range ctx.running {
-						if t == event.task {
-							ctx.running = append(ctx.running[:idx], ctx.running[idx+1:]...)
-							break
-						}
-					}
+					inst.taskCancel = nil
+				}
+				if event.task.test.Status == Status_SUCCESS || event.task.test.Status == Status_FAILED {
+					ctx.completed = append(ctx.completed, event.task)
 
 					elapsed := time.Since(st)
 					oneTask := elapsed / time.Duration(len(ctx.completed))
@@ -255,7 +279,7 @@ func (ctx *executionContext) performExecution() {
 						time.Duration(len(ctx.tasks)+len(ctx.running))*oneTask,
 						len(ctx.running)+len(ctx.tasks))
 				} else {
-					logrus.Infof("Re schedule task")
+					logrus.Infof("Re schedule task %v", event.task.test.Name)
 					ctx.tasks = append(ctx.tasks, event.task)
 				}
 			}
@@ -285,7 +309,7 @@ func (ctx *executionContext) createTasks() {
 				if cmdArguments.count > 0 && i >= cmdArguments.count {
 					logrus.Infof("Limit of tests for execution:: %v is reached. Skipping test %s", cmdArguments.count, test.Name)
 					test.Status = Status_SKIPPED
-					ctx.completed = append(ctx.tasks, task)
+					ctx.skipped = append(ctx.skipped, task)
 				} else {
 					ctx.tasks = append(ctx.tasks, task)
 				}
@@ -322,12 +346,14 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 	task.clusterInstances = instances
 	task.clusterTaskId = ids
 
+	timeout := ctx.getTestTimeout(task)
+
 	go func() {
 		st := time.Now()
 		cmdLine := []string{
 			"go", "test",
 			task.test.ExecutionConfig.PackageRoot,
-			"-test.timeout", "10m",
+			"-test.timeout", fmt.Sprintf("%ds", timeout),
 			"-count", "1",
 			"--run", task.test.Name,
 			"--tags", task.test.Tags,
@@ -343,12 +369,17 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 		}
 
 		writer := bufio.NewWriter(file)
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
+
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout*2) * time.Second)
 		defer cancel()
 
 		logrus.Infof(fmt.Sprintf("Running test %s on cluster's %v \n", task.test.Name, ids))
 
 		_, _ = writer.WriteString(fmt.Sprintf("Running test %s on cluster's %v \n", task.test.Name, ids))
+
+		for _, inst := range instances {
+			inst.taskCancel = cancel
+		}
 
 		proc, error := utils.ExecProc(timeoutCtx, cmdLine, env)
 		if error != nil {
@@ -367,10 +398,29 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 			}
 		}()
 		if code := proc.ExitCode(); code != 0 {
-			logrus.Errorf("Failed to run %s %v. Logs inside %v", cmdLine, code, fileName)
-			_, _ = writer.WriteString(fmt.Sprintf("Exit code %v \n", code))
-			writer.Flush()
-			ctx.updateTestExecution(task, fileName, Status_FAILED)
+
+			// Check if cluster is alive.
+			clusterNotAvailable := false
+			for _, inst := range instances {
+				_, err := inst.instance.CheckIsAlive()
+				if err != nil {
+					clusterNotAvailable = true
+					ctx.destroyCluster(task.cluster, inst)
+				}
+				inst.taskCancel = nil
+			}
+
+
+			if timeoutCtx.Err() == context.Canceled || clusterNotAvailable {
+				logrus.Errorf("Test is canceled due timeout or cluster error.. Will be re-run")
+				ctx.updateTestExecution(task, fileName, Status_TIMEOUT)
+			} else {
+				msg := fmt.Sprintf("Failed to run %s Exit code: %v. Logs inside %v \n", cmdLine, code, fileName)
+				logrus.Errorf(msg)
+				_, _ = writer.WriteString(msg)
+				writer.Flush()
+				ctx.updateTestExecution(task, fileName, Status_FAILED)
+			}
 		}
 
 		task.test.Duration = time.Since(st)
@@ -380,6 +430,15 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 		}
 	}()
 	return nil
+}
+
+func (ctx *executionContext) getTestTimeout(task *testTask) int64 {
+	timeout := task.test.ExecutionConfig.Timeout
+	if timeout == 0 {
+		logrus.Infof("test timeout is not specified, use default value, 3min")
+		timeout = 3 * 60
+	}
+	return timeout
 }
 
 func (ctx *executionContext) updateTestExecution(task *testTask, fileName string, status Status) {
@@ -392,60 +451,77 @@ func (ctx *executionContext) updateTestExecution(task *testTask, fileName string
 }
 
 func (ctx *executionContext) startCluster(group *clustersGroup, ci *clusterInstance) {
-	if ci.startFailed > group.config.RetryCount {
+	if ci.startCount > group.config.RetryCount {
 		ci.state = clusterNotAvailable
 		return
 	}
-	ci.state = clusterStarting
+	ci.state = clusterBusy
 	go func() {
-		err := ci.instance.Start(ctx.manager, time.Minute*30)
+		timeout := ctx.getClusterTimeout(group)
+		ci.startCount++
+		err := ci.instance.Start(ctx.manager, timeout)
 		if err != nil {
 			logrus.Infof("Failed to start cluster instance. Retrying...")
-			ci.startFailed++
-			ci.state = clusterCrashed
-			err := ci.instance.Destroy(ctx.manager, time.Minute*30)
+			err := ci.instance.Destroy(ctx.manager, timeout)
 			logrus.Errorf("Failed to stop cluster %v", err)
-		} else {
-			ci.state = clusterReady
+			ci.state = clusterCrashed
 		}
-
 		// Starting cloud monitoring thread
-		go func() {
-			configLocation, err := ci.instance.GetClusterConfig()
-			if err != nil {
-				ctx.destroyCluster(group, ci)
+		if ci.state != clusterCrashed {
+			ctx.monitorCluster(ci, group)
+		} else {
+			ctx.operationChannel <- operationEvent{
+				kind:            eventClusterUpdate,
+				cluster:         group,
+				clusterInstance: ci,
 			}
-
-			utils, err := k8s.NewK8sUtils(configLocation)
-			if err != nil {
-				ctx.destroyCluster(group, ci)
-			}
-
-			for {
-				nodes, err := utils.GetNodes()
-				if err != nil {
-					logrus.Errorf("Failed to interact with cluster %v", ci.id)
-					ctx.destroyCluster(group, ci)
-					break
-				}
-				<- time.After(5*time.Second)
-			}
-
-		}()
-
-		ctx.operationChannel <- operationEvent{
-			kind:            eventClusterUpdate,
-			cluster:         group,
-			clusterInstance: ci,
+			logrus.Infof("Cluster started...")
 		}
-		logrus.Infof("Cluster started...")
 	}()
 }
 
+func (ctx *executionContext) getClusterTimeout(group *clustersGroup) time.Duration {
+	timeout := time.Duration(group.config.Timeout) * time.Second
+	if group.config.Timeout == 0 {
+		logrus.Infof("test timeout is not specified, use default value 5min")
+		timeout = 5 * time.Minute
+	}
+	return timeout
+}
+
+func (ctx *executionContext) monitorCluster(ci *clusterInstance, group *clustersGroup) {
+	checks := 0
+	for {
+		nodes, err := ci.instance.CheckIsAlive()
+		if err != nil {
+			logrus.Errorf("Failed to interact with cluster %v", ci.id)
+			ctx.destroyCluster(group, ci)
+			break
+		}
+
+		if checks == 0 {
+			// Initial check performed, we need to make cluster ready.
+			ci.state = clusterReady
+			ctx.operationChannel <- operationEvent{
+				kind:            eventClusterUpdate,
+				cluster:         group,
+				clusterInstance: ci,
+			}
+			logrus.Infof("Cluster started...")
+		}
+		checks++;
+		logrus.Infof("Cluster is alive: %s. Nodes count: %v Uptime: %v seconds", ci.id, len(nodes), checks*5)
+		<-time.After(5 * time.Second)
+	}
+}
+
 func (ctx *executionContext) destroyCluster(group *clustersGroup, ci *clusterInstance) {
+	group.lock.Lock()
+	defer group.lock.Unlock()
 	ci.state = clusterBusy
-	//TODO: Add destroy retry
-	err := ci.instance.Destroy(ctx.manager, time.Minute*30)
+
+	timeout := ctx.getClusterTimeout(group)
+	err := ci.instance.Destroy(ctx.manager, timeout)
 	if err != nil {
 		logrus.Errorf("Failed to destroy cluster")
 	}
@@ -546,12 +622,34 @@ func (ctx *executionContext) generateJUnitReportFile() int {
 				Time: fmt.Sprintf("%v", test.test.Duration),
 			}
 			totalTests++
-			if test.test.Status != Status_SUCCESS {
+
+			switch test.test.Status {
+			case Status_FAILED, Status_TIMEOUT:
 				failures++
+
+				message := fmt.Sprintf("Test execution failed %v", test.test.Name)
+				result := ""
+				for _, ex := range test.test.Executions {
+					lines, err := utils.ReadFile(ex.OutputFile)
+					if err != nil {
+						logrus.Errorf("Failed to read stored output %v", ex.OutputFile)
+						lines = []string{"Failed to read stored output:", ex.OutputFile, err.Error()}
+					}
+					result = strings.Join(lines, "\n")
+				}
+
 				testCase.Failure = &reporting.Failure{
 					Type:     "ERROR",
-					Contents: "Test is failed",
-					Message:  "Failed to execute testcase",
+					Contents: result,
+					Message:  message,
+				}
+			case Status_SKIPPED:
+				testCase.SkipMessage = &reporting.SkipMessage{
+					Message: "By limit of number of tests to run",
+				}
+			case Status_SKIPPED_NO_CLUSTERS:
+				testCase.SkipMessage = &reporting.SkipMessage{
+					Message: "No clusters are avalable, all clusters reached restart limits...",
 				}
 			}
 			suite.TestCases = append(suite.TestCases, testCase)

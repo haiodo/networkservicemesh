@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/k8s"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
 	"github.com/sirupsen/logrus"
+	v1 "k8s.io/api/core/v1"
 	"path"
 	"strconv"
 	"strings"
@@ -41,6 +43,14 @@ type shellInstance struct {
 	configScript   string
 	startScript    []string
 	stopScript     []string
+	utils *k8s.K8sUtils
+}
+
+func (si *shellInstance) CheckIsAlive() ([]v1.Node, error) {
+	if si.started {
+		return si.utils.GetNodes()
+	}
+	return nil, fmt.Errorf("Cluster is not running")
 }
 
 func (si *shellInstance) IsRunning() bool {
@@ -59,6 +69,7 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 	if err != nil {
 		return err
 	}
+	defer func() {_ = file.Close()}()
 
 	logrus.Infof("Starting cluster %s-%s logfile: %v", si.config.Name, si.id, fileName)
 
@@ -68,42 +79,54 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 	defer cancel()
 
 	_, _ = writer.WriteString(fmt.Sprintf("Starting cluster %s\n with configuration %v\n", si.id, si.config))
-	writer.Flush()
+	_ = writer.Flush()
 
 	for _, cmd := range si.startScript {
 		if len(strings.TrimSpace(cmd)) == 0 {
 			continue
 		}
 		_, _ = writer.WriteString(fmt.Sprintf("Running: %v\n", cmd))
-		writer.Flush()
+		_ = writer.Flush()
 		logrus.Infof("Running: %s => %s", si.id, cmd)
 
 		if err := si.runCommand(context, cmd, fileName, writer); err != nil {
 			_, _ = writer.WriteString(fmt.Sprintf("Error running command: %v\n", err))
-			writer.Flush()
+			_ = writer.Flush()
 			return err
 		}
 	}
 
-
+	_, _ = writer.WriteString("Retriving configuation location")
+	_ = writer.Flush()
 	output, err := utils.ExecRead(context, strings.Split(si.configScript, " "))
 	if err != nil {
 		return err
 	}
 	si.configLocation = output[0]
 
-	si.started = true
+	_, _ = writer.WriteString(strings.Join(output, "\n"))
+
 
 	defer func() {
 		_ = file.Close()
 	}()
 
-	// Let's check Kubernetes clister is alive.
+	_, _ = writer.WriteString("Constructing K8s client API to connect to cluster")
 
+	si.utils, err = k8s.NewK8sUtils(si.configLocation)
+	if err != nil {
+		si.doDestroy(writer, manager, timeout, err)
+		return err
+	}
 
+	nodes, err := si.utils.GetNodes()
+	if err != nil {
+		si.doDestroy(writer, manager, timeout, err)
+		return err
+	}
+	si.started = true
 
-
-
+	_, _ = writer.WriteString(fmt.Sprintf("Cluster started properly with nodes: %v", nodes))
 	return nil
 }
 func (si *shellInstance) Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error {
@@ -165,6 +188,16 @@ func (si *shellInstance) runCommand(context context.Context, cmd, fileName strin
 		return fmt.Errorf("Failed to run %s ExitCode: %v. Logs inside %v", cmdLine, code, fileName)
 	}
 	return nil
+}
+
+func (si *shellInstance) doDestroy(writer *bufio.Writer, manager execmanager.ExecutionManager, timeout time.Duration, err error) {
+	_, _ = writer.WriteString(fmt.Sprintf("Error during k8s API initialisation %v", err))
+	_, _ = writer.WriteString(fmt.Sprintf("Trying to destroy cluster"))
+	// In case we failed to start and create cluster utils.
+	err2 := si.Destroy(manager, timeout)
+	if err2 != nil {
+		_, _ = writer.WriteString(fmt.Sprintf("Error during destroy of cluster %v", err2))
+	}
 }
 
 func (p *shellProvider) CreateCluster(config *config.ClusterProviderConfig) (providers.ClusterInstance, error) {

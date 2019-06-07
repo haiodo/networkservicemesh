@@ -19,6 +19,7 @@ const (
 	// Test timeout waiting for results
 	Status_TIMEOUT Status = 2
 	Status_SKIPPED Status = 3
+	Status_SKIPPED_NO_CLUSTERS Status = 4
 )
 
 type TestEntryExecution struct {

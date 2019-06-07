@@ -3,6 +3,7 @@ package providers
 import (
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
+	v1 "k8s.io/api/core/v1"
 	"time"
 )
 
@@ -25,6 +26,7 @@ type ClusterInstance interface {
 
 	// Is cluster is running right now
 	IsRunning() bool
+	CheckIsAlive() ([]v1.Node, error)
 }
 
 type ClusterProvider interface {
