@@ -50,7 +50,16 @@ type shellInstance struct {
 
 func (si *shellInstance) CheckIsAlive() ([]v1.Node, error) {
 	if si.started {
-		return si.utils.GetNodes()
+		nodes, err := si.utils.GetNodes()
+		if err != nil {
+			return nodes, err
+		}
+		if len(nodes) < si.config.NodeCount {
+			msg := fmt.Sprintf("Cluster lost some of its nodes: %v required nodes: %v", nodes, si.config.NodeCount)
+			logrus.Error(msg)
+			return nodes, fmt.Errorf(msg)
+		}
+		return nodes, err
 	}
 	return nil, fmt.Errorf("Cluster is not running")
 }

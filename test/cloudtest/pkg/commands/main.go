@@ -328,8 +328,9 @@ func (ctx *executionContext) printStatistics() {
 	}
 	logrus.Infof("Statistics:"+
 		"\n\tElapsed total: %v"+
-		"\n\tTests time: %v Tasks completed: (%d)"+
-		"\n\tRemaining: %v (%d).\n"+
+		"\n\tTests time: %v" +
+		"\n\tTasks  Completed: %d"+
+		"\n\t		Remaining: %v (%d).\n"+
 		"%s%s",
 		elapsed,
 		elapsedRunning, len(ctx.completed),
@@ -409,7 +410,7 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 			task.test.ExecutionConfig.PackageRoot,
 			"-test.timeout", fmt.Sprintf("%ds", timeout),
 			"-count", "1",
-			"--run", task.test.Name,
+			"--run", fmt.Sprintf("^(%s)", task.test.Name),
 			"--tags", task.test.Tags,
 			"--test.v", task.test.Tags,
 		}
@@ -712,6 +713,7 @@ func (ctx *executionContext) generateJUnitReportFile() int {
 	for _, cluster := range ctx.clusters {
 		failures := 0
 		totalTests := 0
+		totalTime := time.Duration(0)
 		suite := &reporting.Suite{
 			Name: cluster.config.Name,
 		}
@@ -722,6 +724,7 @@ func (ctx *executionContext) generateJUnitReportFile() int {
 				Time: fmt.Sprintf("%v", test.test.Duration),
 			}
 			totalTests++
+			totalTime += test.test.Duration
 
 			switch test.test.Status {
 			case Status_FAILED, Status_TIMEOUT:
@@ -755,6 +758,8 @@ func (ctx *executionContext) generateJUnitReportFile() int {
 			suite.TestCases = append(suite.TestCases, testCase)
 		}
 		suite.Tests = totalTests
+		suite.Failures = failures
+		suite.Time = fmt.Sprintf("%v", totalTime)
 		totalFailures += failures
 
 		ctx.report.Suites = append(ctx.report.Suites, suite)

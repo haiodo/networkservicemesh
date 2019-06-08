@@ -26,10 +26,11 @@ providers:
       start: |
         make kind-config
         make kind-start
-        echo make k8s-load-images
       stop: make kind-stop
       config: make kind-config-location
-      start-config: make k8s-config
+      start-config: |
+        make k8s-load-images
+        make k8s-config
 
   - name: "Vagrant"
     kind: "shell"
@@ -45,8 +46,9 @@ providers:
     parameters:
       start: |
         make vagrant-start
-        echo make k8s-load-images
-      start-config: make k8s-config
+      start-config: |
+        make k8s-load-images
+        make k8s-config
       stop: make vagrant-suspend
       config: make vagrant-config-location
 reporting:
