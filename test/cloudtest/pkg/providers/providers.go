@@ -3,7 +3,7 @@ package providers
 import (
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
-	v1 "k8s.io/api/core/v1"
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/k8s"
 	"time"
 )
 
@@ -26,14 +26,15 @@ type ClusterInstance interface {
 
 	// Is cluster is running right now
 	IsRunning() bool
-	CheckIsAlive() ([]v1.Node, error)
+	CheckIsAlive() error
+	GetId() string
 }
 
 type ClusterProvider interface {
 	// Create a cluster based on parameters
 	// CreateCluster - Creates a cluster instance and put Kubernetes config file into clusterConfigRoot
 	// could fully use clusterConfigRoot folder for any temporary files related to cluster.
-	CreateCluster( config *config.ClusterProviderConfig ) (ClusterInstance, error)
+	CreateCluster( config *config.ClusterProviderConfig, factory k8s.ValidationFactory ) (ClusterInstance, error)
 
 	// Check if config are valid and all parameters required by this cluster are fit.
 	ValidateConfig( config *config.ClusterProviderConfig ) error

@@ -58,13 +58,15 @@ func FolderExists(root string) bool {
 	return !os.IsNotExist(err)
 }
 
-func ClearFolder(root string) {
+func ClearFolder(root string, recreate bool) {
 	if FolderExists(root) {
 		logrus.Infof("Cleaning report folder %s", root)
 		_ = os.RemoveAll(root)
 	}
-	// Create folder, since we delete is already.
-	CreateFolders(root)
+	if recreate {
+		// Create folder, since we delete is already.
+		CreateFolders(root)
+	}
 }
 
 func CreateFolders(root string) {

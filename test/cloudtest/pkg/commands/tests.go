@@ -43,14 +43,13 @@ func GetTestConfiguration(manager execmanager.ExecutionManager, root string, tag
 	gotestCmd := []string{"go", "test", root, "--list", ".*"}
 	if len(tags) > 0 {
 		result := []*TestEntry{}
-		for _, tag := range tags {
-			tests, err := getTests(manager, append(gotestCmd, "-tags", tag), tag)
-			if err != nil {
-				return nil, err
-			}
-			logrus.Infof("Found %d tests with tags %s", len(tests), tag)
-			result = append(result, tests...)
+		tagsStr := strings.Join(tags, " ")
+		tests, err := getTests(manager, append(gotestCmd, "-tags", tagsStr), tagsStr)
+		if err != nil {
+			return nil, err
 		}
+		logrus.Infof("Found %d tests with tags %s", len(tests), tagsStr)
+		result = append(result, tests...)
 		return result, nil
 	} else {
 		return getTests(manager, gotestCmd, "")
@@ -58,7 +57,6 @@ func GetTestConfiguration(manager execmanager.ExecutionManager, root string, tag
 }
 
 func getTests(manager execmanager.ExecutionManager, gotestCmd []string, tag string) ([]*TestEntry, error) {
-	st := time.Now()
 	result, err := utils.ExecRead(context.Background(), gotestCmd)
 	if err != nil {
 		logrus.Errorf("Error getting list of tests %v", err)
@@ -80,7 +78,5 @@ func getTests(manager execmanager.ExecutionManager, gotestCmd []string, tag stri
 			})
 		}
 	}
-
-	logrus.Infof("Tests found: %v Elapsed: %v", len(result), time.Since(st))
 	return testResult, nil
 }

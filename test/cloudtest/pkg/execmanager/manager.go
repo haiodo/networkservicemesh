@@ -10,8 +10,8 @@ import (
 )
 
 type ExecutionManager interface {
-	AddTestLog(category, clusterName, testName, operation, content string)
-	OpenFileTest(category, clusterName, testname, operation string) (string, *os.File, error)
+	AddTestLog(category, testName, operation, content string)
+	OpenFileTest(category, testname, operation string) (string, *os.File, error)
 	AddLog(category, operationName, content string)
 	OpenFile(category, operationName string) (string, *os.File, error)
 	GetRoot(root string) string
@@ -20,24 +20,32 @@ type ExecutionManager interface {
 
 type executionManagerImpl struct {
 	root string
-	step int
+	steps map[string]int
 	sync.Mutex
 }
 
 // write file 'clusters/GKE/create'
 // write file 'clusters/GKE/tests/testname/output'
 // write file 'clusters/GKE/tests/testname/kubectl_logs'
-func (mgr *executionManagerImpl) AddTestLog(category, clusterName, testName, operation, content string) {
+func (mgr *executionManagerImpl) AddTestLog(category, testName, operation, content string) {
+	cat := mgr.getCategory(category)
+	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%s-%s-%s-%s.log", cat, testName, operation), content)
+}
+
+func (mgr *executionManagerImpl) getCategory(category string) string {
 	mgr.Lock()
 	defer mgr.Unlock()
-	mgr.step++
-	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s-%s-%s.log", mgr.step, testName, clusterName, operation), content)
+	val, ok := mgr.steps[category]
+	if ok {
+		val++
+	} else {
+		val = 1
+	}
+	mgr.steps[category] = val
+	return fmt.Sprintf("%d", val)
 }
 
 func (mgr *executionManagerImpl) AddFile(fileName string, bytes []byte) {
-	mgr.Lock()
-	defer mgr.Unlock()
-	mgr.step++
 	fileName, f, err := utils.OpenFile(mgr.root, fileName)
 
 	if err != nil {
@@ -52,24 +60,18 @@ func (mgr *executionManagerImpl) AddFile(fileName string, bytes []byte) {
 }
 
 func (mgr *executionManagerImpl) OpenFile(category, operationName string) (string, *os.File, error) {
-	mgr.Lock()
-	defer mgr.Unlock()
-	mgr.step++
-	return utils.OpenFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s.log", mgr.step, operationName))
+	cat := mgr.getCategory(category)
+	return utils.OpenFile(path.Join(mgr.root, category), fmt.Sprintf("%s-%s.log", cat, operationName))
 }
-func (mgr *executionManagerImpl) OpenFileTest(category, clusterName, testName, operation string) (string, *os.File, error) {
-	mgr.Lock()
-	defer mgr.Unlock()
-	mgr.step++
-	return utils.OpenFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s-%s-%s.log", mgr.step, testName, clusterName, operation))
+func (mgr *executionManagerImpl) OpenFileTest(category, testName, operation string) (string, *os.File, error) {
+	cat := mgr.getCategory(category)
+	return utils.OpenFile(path.Join(mgr.root, category), fmt.Sprintf("%s-%s-%s.log", cat, testName, operation))
 }
 
 func (mgr *executionManagerImpl) AddLog(category, operationName, content string) {
-	mgr.Lock()
-	defer mgr.Unlock()
-	mgr.step++
+	cat := mgr.getCategory(category)
 
-	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%d-%s.log", mgr.step, operationName), content)
+	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%s-%s.log", cat, operationName), content)
 }
 
 func (mgr *executionManagerImpl) GetRoot(root string) string {
@@ -93,9 +95,9 @@ func (mgr *executionManagerImpl) GetRoot(root string) string {
 }
 
 func NewExecutionManager(root string) ExecutionManager {
-	utils.ClearFolder(root)
+	utils.ClearFolder(root, true)
 	return &executionManagerImpl{
 		root: root,
-		step: 0,
+		steps: map[string]int{},
 	}
 }

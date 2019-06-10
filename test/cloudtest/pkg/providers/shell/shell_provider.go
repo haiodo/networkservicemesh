@@ -10,7 +10,6 @@ import (
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
 	"github.com/sirupsen/logrus"
-	v1 "k8s.io/api/core/v1"
 	"path"
 	"strconv"
 	"strings"
@@ -19,49 +18,49 @@ import (
 )
 
 const (
-	ShellConfigScript      = "config"
-	ShellStartScript       = "start"
-	ShellStartConfigScript = "start-config"
-	ShellStopScript        = "stop"
-	ShellKeepAlive         = "keep-alive"
+	ShellConfigScript  = "config"
+	ShellInstallScript = "install"
+	ShellStartScript   = "start"
+	ShellPrepareScript = "prepare"
+	ShellStopScript    = "stop"
+	ShellKeepAlive     = "keep-alive"
 )
 
 type shellProvider struct {
 	root  string
-	index int
+	indexes map[string]int
 	sync.Mutex
-	clusters []shellInstance
+	clusters    []shellInstance
+	installDone map[string]bool
 }
 
 type shellInstance struct {
-	root              string
-	id                string
-	config            *config.ClusterProviderConfig
-	started           bool
-	startFailed       int
-	keepAlive         bool
-	configLocation    string
-	configScript      string
-	startScript       []string
-	startConfigScript []string
-	stopScript        []string
-	utils             *k8s.K8sUtils
+	root           string
+	id             string
+	config         *config.ClusterProviderConfig
+	started        bool
+	startFailed    int
+	keepAlive      bool
+	configLocation string
+	configScript   string
+	installScript  []string
+	startScript    []string
+	prepareScript  []string
+	stopScript     []string
+	provider       *shellProvider
+	factory        k8s.ValidationFactory
+	validator      k8s.KubernetesValidator
 }
 
-func (si *shellInstance) CheckIsAlive() ([]v1.Node, error) {
+func (si *shellInstance) GetId() string {
+	return si.id
+}
+
+func (si *shellInstance) CheckIsAlive() error {
 	if si.started {
-		nodes, err := si.utils.GetNodes()
-		if err != nil {
-			return nodes, err
-		}
-		if len(nodes) < si.config.NodeCount {
-			msg := fmt.Sprintf("Cluster lost some of its nodes: %v required nodes: %v", nodes, si.config.NodeCount)
-			logrus.Error(msg)
-			return nodes, fmt.Errorf(msg)
-		}
-		return nodes, err
+		return si.validator.Validate()
 	}
-	return nil, fmt.Errorf("Cluster is not running")
+	return fmt.Errorf("Cluster is not running")
 }
 
 func (si *shellInstance) IsRunning() bool {
@@ -76,138 +75,57 @@ func (si *shellInstance) GetClusterConfig() (string, error) {
 }
 
 func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout time.Duration) error {
-	fileName, file, err := manager.OpenFile("cluster_start", fmt.Sprintf("starting_%s", si.id))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-
-	logrus.Infof("Starting cluster %s-%s logfile: %v", si.config.Name, si.id, fileName)
-
-	writer := bufio.NewWriter(file)
+	logrus.Infof("Starting cluster %s-%s", si.config.Name, si.id)
 
 	context, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	_, _ = writer.WriteString(fmt.Sprintf("Starting cluster %s\n with configuration %v\n", si.id, si.config))
-	_ = writer.Flush()
-
-	for _, cmd := range si.startScript {
-		if len(strings.TrimSpace(cmd)) == 0 {
-			continue
-		}
-		_, _ = writer.WriteString(fmt.Sprintf("Running: %v\n", cmd))
-		_ = writer.Flush()
-		logrus.Infof("Running: %s => %s", si.id, cmd)
-
-		if err := si.runCommand(context, cmd, fileName, writer); err != nil {
-			_, _ = writer.WriteString(fmt.Sprintf("Error running command: %v\n", err))
-			_ = writer.Flush()
-			return err
-		}
+	// Do prepare
+	if err := si.doInstall(manager, context); err != nil {
+		return err
 	}
 
-	_, _ = writer.WriteString("Retrieving configuration location\n")
-	_ = writer.Flush()
+	// Run start script
+	if err := si.runCmd(manager, context, "start", si.startScript, nil); err != nil {
+		return err
+	}
+
 	output, err := utils.ExecRead(context, strings.Split(si.configScript, " "))
 	if err != nil {
 		msg := fmt.Sprintf("Failed to retrieve configuration location %v", err)
-		_, _ = writer.WriteString(msg)
 		logrus.Errorf(msg)
 		return err
 	}
+
 	si.configLocation = output[0]
-
-	_, _ = writer.WriteString(strings.Join(output, "\n"))
-
-	defer func() {
-		_ = file.Close()
-	}()
-
-	_, _ = writer.WriteString("Constructing K8s client API to connect to cluster.\n")
-
-	si.utils, err = k8s.NewK8sUtils(si.configLocation)
-	if err != nil {
+	si.validator, err = si.factory.CreateValidator(si.config, si.configLocation)
+	// Run prepare script
+	if err := si.runCmd(manager, context, "prepare", si.prepareScript, []string{"KUBECONFIG=" + si.configLocation}); err != nil {
 		return err
-	}
-
-	requiedNodes := si.config.NodeCount
-	for {
-		nodes, err := si.utils.GetNodes()
-		if err != nil {
-			return err
-		}
-		if len(nodes) >= requiedNodes {
-			_, _ = writer.WriteString(fmt.Sprintf("Cluster started properly with nodes: %v\n", nodes))
-			break;
-		}
-		msg := fmt.Sprintf("Cluster %s doesn't have required number of nodes to be available. Required: %v Available: %v\n", si.id, requiedNodes, len(nodes))
-		logrus.Errorf(msg)
-		err = fmt.Errorf(msg)
-		return err
-	}
-
-	// Running start config script
-	for _, cmd := range si.startConfigScript {
-		if len(strings.TrimSpace(cmd)) == 0 {
-			continue
-		}
-		_, _ = writer.WriteString(fmt.Sprintf("Running: %v\n", cmd))
-		_ = writer.Flush()
-		logrus.Infof("Running: %s => %s", si.id, cmd)
-
-		si.config.Env = append(si.config.Env, "KUBECONFIG="+si.configLocation)
-
-		if err := si.runCommand(context, cmd, fileName, writer); err != nil {
-			_, _ = writer.WriteString(fmt.Sprintf("Error running command: %v\n", err))
-			_ = writer.Flush()
-			return err
-		}
 	}
 
 	si.started = true
+
 	return nil
 }
 func (si *shellInstance) Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error {
-	fileName, file, err := manager.OpenFile("cluster_stop", fmt.Sprintf("stopping_%s", si.id))
-	if err != nil {
-		return err
-	}
-
-	logrus.Infof("Destroying cluster  %s-%s logfile: %v", si.config.Name, si.id, fileName)
-
-	writer := bufio.NewWriter(file)
+	logrus.Infof("Destroying cluster  %s", si.id)
 
 	context, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-
-	_, _ = writer.WriteString(fmt.Sprintf("Stopping cluster %s with configuration %v \n", si.id, si.config))
-
-	for _, cmd := range si.stopScript {
-		_, _ = writer.WriteString(fmt.Sprintf("Running: %v\n", cmd))
-		logrus.Infof("Running: %s => %s", si.id, cmd)
-
-		if err := si.runCommand(context, cmd, fileName, writer); err != nil {
-			return err
-		}
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-
-	return nil
+	return si.runCmd(manager, context, "destroy", si.stopScript, nil)
 }
 
 func (si *shellInstance) GetRoot() string {
 	return si.root
 }
 
-func (si *shellInstance) runCommand(context context.Context, cmd, fileName string, writer *bufio.Writer) error {
+func (si *shellInstance) runCommand(context context.Context, cmd, fileName string, writer *bufio.Writer, env []string) error {
 	cmdLine := strings.Split(cmd, " ")
 
-	proc, error := utils.ExecProc(context, cmdLine, si.config.Env)
-	if error != nil {
-		return fmt.Errorf("Failed to run %s %v", cmdLine)
+	proc, err := utils.ExecProc(context, cmdLine, append(si.config.Env, env...))
+	if err != nil {
+		return fmt.Errorf("Failed to run %s %v", cmdLine, err)
 	}
 	go func() {
 		reader := bufio.NewReader(proc.Stdout)
@@ -217,7 +135,7 @@ func (si *shellInstance) runCommand(context context.Context, cmd, fileName strin
 				break
 			}
 			_, _ = writer.WriteString(s)
-			writer.Flush()
+			_ = writer.Flush()
 			logrus.Infof("Output: %s => %s %v", si.id, cmd, s)
 		}
 	}()
@@ -238,24 +156,75 @@ func (si *shellInstance) doDestroy(writer *bufio.Writer, manager execmanager.Exe
 	}
 }
 
-func (p *shellProvider) CreateCluster(config *config.ClusterProviderConfig) (providers.ClusterInstance, error) {
+func (si *shellInstance) doInstall(manager execmanager.ExecutionManager, context context.Context) error {
+	si.provider.Lock()
+	defer si.provider.Unlock()
+	if si.installScript != nil && !si.provider.installDone[si.config.Name] {
+		si.provider.installDone[si.config.Name] = true
+		return si.runCmd(manager, context, "install", si.installScript, nil)
+	}
+	return nil
+}
+
+func (si *shellInstance) runCmd(manager execmanager.ExecutionManager, context context.Context, operation string, script []string, env []string) error {
+	fileName, fileRef, err := manager.OpenFile(si.id, operation)
+	if err != nil {
+		logrus.Errorf("Failed to %s system for testing of cluster %s %v", operation, si.config.Name, err)
+		return err
+	}
+
+	defer fileRef.Close()
+
+	writer := bufio.NewWriter(fileRef)
+
+	for _, cmd := range script {
+		if len(strings.TrimSpace(cmd)) == 0 {
+			continue
+		}
+		_, _ = writer.WriteString(fmt.Sprintf("%s: %v\n", operation, cmd))
+		_ = writer.Flush()
+		logrus.Infof("%s: %s => %s", operation, si.id, cmd)
+
+		if err := si.runCommand(context, cmd, fileName, writer, env); err != nil {
+			_, _ = writer.WriteString(fmt.Sprintf("Error running command: %v\n", err))
+			_ = writer.Flush()
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *shellProvider) getProviderId(provider string) string {
+	val, ok := p.indexes[provider]
+	if ok {
+		val++
+	} else {
+		val = 1
+	}
+	p.indexes[provider] = val
+	return fmt.Sprintf("%d", val)
+}
+
+func (p *shellProvider) CreateCluster(config *config.ClusterProviderConfig, factory k8s.ValidationFactory) (providers.ClusterInstance, error) {
 	err := p.ValidateConfig(config)
 	if err != nil {
 		return nil, err
 	}
 	p.Lock()
 	defer p.Unlock()
-	p.index++
-	id := fmt.Sprintf("cluster-%d", p.index)
+	id := fmt.Sprintf("%s-%s", config.Name, p.getProviderId(config.Name))
 
 	clusterInstance := &shellInstance{
-		root:              path.Join(p.root, id),
-		id:                id,
-		config:            config,
-		configScript:      config.Parameters[ShellConfigScript],
-		startScript:       p.parseScript(config.Parameters[ShellStartScript]),
-		startConfigScript: p.parseScript(config.Parameters[ShellStartConfigScript]),
-		stopScript:        p.parseScript(config.Parameters[ShellStopScript]),
+		provider:      p,
+		root:          path.Join(p.root, id),
+		id:            id,
+		config:        config,
+		configScript:  config.Parameters[ShellConfigScript],
+		installScript: p.parseScript(config.Parameters[ShellInstallScript]),
+		startScript:   p.parseScript(config.Parameters[ShellStartScript]),
+		prepareScript: p.parseScript(config.Parameters[ShellPrepareScript]),
+		stopScript:    p.parseScript(config.Parameters[ShellStopScript]),
+		factory:       factory,
 	}
 
 	if value, err := strconv.ParseBool(config.Parameters[ShellKeepAlive]); err == nil {
@@ -271,11 +240,12 @@ func init() {
 }
 
 func NewShellClusterProvider(root string) providers.ClusterProvider {
-	utils.ClearFolder(root)
+	utils.ClearFolder(root, true)
 	return &shellProvider{
 		root:     root,
 		clusters: []shellInstance{},
-		index:    0,
+		indexes: map[string]int{},
+		installDone: map[string]bool{},
 	}
 }
 

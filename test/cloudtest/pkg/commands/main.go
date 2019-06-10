@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/k8s"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
 	_ "github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers/shell"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/reporting"
@@ -111,6 +112,7 @@ type executionContext struct {
 	report           *reporting.JUnitFile
 	startTime        time.Time
 	clusterReadyTime time.Time
+	factory          k8s.ValidationFactory
 }
 
 func CloudTestRun(cmd *cobra.Command, args []string) {
@@ -126,39 +128,42 @@ func CloudTestRun(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	config := &config.CloudTestConfig{}
+	parseConfig(config, configFileContent)
+
+	err, _ = PerformTesting(config, k8s.CreateFactory())
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+func PerformTesting(config *config.CloudTestConfig, factory k8s.ValidationFactory) (error, *reporting.JUnitFile) {
 	ctx := &executionContext{
-		cloudTestConfig:  &config.CloudTestConfig{},
+		cloudTestConfig:  config,
 		operationChannel: make(chan operationEvent),
 		tasks:            []*testTask{},
 		running:          map[string]*testTask{},
 		completed:        []*testTask{},
 		tests:            []*TestEntry{},
+		factory:          factory,
 	}
-
-	ctx.parseConfig(configFileContent)
-
 	ctx.manager = execmanager.NewExecutionManager(ctx.cloudTestConfig.ConfigRoot)
-
 	// Create cluster instance handles
-	ctx.createClusters()
-
+	if err := ctx.createClusters(); err != nil {
+		return err, nil
+	}
 	// Collect tests
 	ctx.findTests()
-
 	// We need to be sure all clusters will be deleted on end of execution.
 	defer ctx.performShutdown()
-
 	// Fill tasks to be executed..
 	ctx.createTasks()
-
 	ctx.performExecution()
-
-	ctx.generateJUnitReportFile()
-
+	return ctx.generateJUnitReportFile()
 }
 
-func (ctx *executionContext) parseConfig(configFileContent []byte) {
-	err := yaml.Unmarshal(configFileContent, &ctx.cloudTestConfig)
+func parseConfig(cloudTestConfig *config.CloudTestConfig, configFileContent []byte) {
+	err := yaml.Unmarshal(configFileContent, cloudTestConfig)
 	if err != nil {
 		logrus.Errorf("Failed to parse configuration file: %v", err)
 		os.Exit(1)
@@ -170,19 +175,24 @@ func (ctx *executionContext) performShutdown() {
 	// We need to stop all clusters we started
 	if !cmdArguments.noStop {
 		var wg sync.WaitGroup
-		for _, cl := range ctx.clusters {
-			for _, inst := range cl.instances {
+		for _, clG := range ctx.clusters {
+			group := clG
+			for _, cInst := range group.instances {
+				curInst := cInst
+				logrus.Infof("Schedule Closing cluster %v %v", group.config.Name, curInst.id)
 				wg.Add(1)
+
 
 				go func() {
 					defer wg.Done()
-					logrus.Infof("Closing cluster %v %v", cl.config.Name, inst.id)
-					ctx.destroyCluster(cl, inst)
+					logrus.Infof("Closing cluster %v %v", group.config.Name, curInst.id)
+					ctx.destroyCluster(group, curInst, false)
 				}()
 			}
 		}
 		wg.Wait()
 	}
+	logrus.Infof("All clusters destroyed")
 }
 
 func (ctx *executionContext) performExecution() {
@@ -328,7 +338,7 @@ func (ctx *executionContext) printStatistics() {
 	}
 	logrus.Infof("Statistics:"+
 		"\n\tElapsed total: %v"+
-		"\n\tTests time: %v" +
+		"\n\tTests time: %v"+
 		"\n\tTasks  Completed: %d"+
 		"\n\t		Remaining: %v (%d).\n"+
 		"%s%s",
@@ -383,7 +393,7 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 			ci.state = clusterBusy
 		})
 	}
-	fileName, file, err := ctx.manager.OpenFileTest("test", ids, task.test.Name, "run")
+	fileName, file, err := ctx.manager.OpenFileTest(ids, task.test.Name, "run")
 	if err != nil {
 		return err
 	}
@@ -410,9 +420,9 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 			task.test.ExecutionConfig.PackageRoot,
 			"-test.timeout", fmt.Sprintf("%ds", timeout),
 			"-count", "1",
-			"--run", fmt.Sprintf("^(%s)", task.test.Name),
+			"--run", fmt.Sprintf("^(%s)$", task.test.Name),
 			"--tags", task.test.Tags,
-			"--test.v", task.test.Tags,
+			"--test.v",
 		}
 
 		env := []string{
@@ -462,10 +472,10 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 			// Check if cluster is alive.
 			clusterNotAvailable := false
 			for _, inst := range instances {
-				_, err := inst.instance.CheckIsAlive()
+				err := inst.instance.CheckIsAlive()
 				if err != nil {
 					clusterNotAvailable = true
-					ctx.destroyCluster(task.cluster, inst)
+					ctx.destroyCluster(task.cluster, inst, true)
 				}
 				inst.taskCancel = nil
 			}
@@ -505,8 +515,8 @@ func (ctx *executionContext) updateTestExecution(task *testTask, fileName string
 	})
 	ctx.operationChannel <- operationEvent{
 		cluster: task.cluster,
-		task: task,
-		kind: eventTaskUpdate,
+		task:    task,
+		kind:    eventTaskUpdate,
 	}
 }
 
@@ -530,7 +540,7 @@ func (ctx *executionContext) startCluster(group *clustersGroup, ci *clusterInsta
 		ci.startCount++
 		err := ci.instance.Start(ctx.manager, timeout)
 		if err != nil {
-			ctx.destroyCluster(group, ci)
+			ctx.destroyCluster(group, ci, true)
 			ctx.setClusterState(group, ci, func(ci *clusterInstance) {
 				ci.state = clusterCrashed
 			})
@@ -562,10 +572,10 @@ func (ctx *executionContext) getClusterTimeout(group *clustersGroup) time.Durati
 func (ctx *executionContext) monitorCluster(context context.Context, ci *clusterInstance, group *clustersGroup) {
 	checks := 0
 	for {
-		nodes, err := ci.instance.CheckIsAlive()
+		err := ci.instance.CheckIsAlive()
 		if err != nil {
 			logrus.Errorf("Failed to interact with cluster %v", ci.id)
-			ctx.destroyCluster(group, ci)
+			ctx.destroyCluster(group, ci, true)
 			break
 		}
 
@@ -588,13 +598,13 @@ func (ctx *executionContext) monitorCluster(context context.Context, ci *cluster
 		case <-time.After(5 * time.Second):
 			break;
 		case <-context.Done():
-			logrus.Infof("Cluster monitoring is canceled: %s. Nodes count: %v Uptime: %v seconds", ci.id, len(nodes), checks*5)
+			logrus.Infof("Cluster monitoring is canceled: %s. Uptime: %v seconds", ci.id, checks*5)
 			return
 		}
 	}
 }
 
-func (ctx *executionContext) destroyCluster(group *clustersGroup, ci *clusterInstance) {
+func (ctx *executionContext) destroyCluster(group *clustersGroup, ci *clusterInstance, sendUpdate bool) {
 	group.lock.Lock()
 	defer group.lock.Unlock()
 
@@ -627,17 +637,22 @@ func (ctx *executionContext) destroyCluster(group *clustersGroup, ci *clusterIns
 
 	ci.state = clusterCrashed
 
-	ctx.operationChannel <- operationEvent{
-		cluster:         group,
-		clusterInstance: ci,
-		kind:            eventClusterUpdate,
+	if sendUpdate {
+		ctx.operationChannel <- operationEvent{
+			cluster:         group,
+			clusterInstance: ci,
+			kind:            eventClusterUpdate,
+		}
 	}
 
 }
 
-func (ctx *executionContext) createClusters() {
+func (ctx *executionContext) createClusters() error {
 	ctx.clusters = []*clustersGroup{}
-	clusterProviders := createClusterProviders(ctx.manager)
+	clusterProviders, err := createClusterProviders(ctx.manager)
+	if err != nil {
+		return err
+	}
 
 	for _, cl := range ctx.cloudTestConfig.Providers {
 		if cmdArguments.onlyEnabled {
@@ -655,22 +670,29 @@ func (ctx *executionContext) createClusters() {
 		if cl.Enabled {
 			logrus.Infof("Initialize provider for config:: %v %v", cl.Name, cl.Kind)
 			if provider, ok := clusterProviders[cl.Kind]; !ok {
-				logrus.Errorf("Cluster provider %s are not found...", cl.Kind)
-				os.Exit(1)
+				msg := fmt.Sprintf("Cluster provider %s are not found...", cl.Kind)
+				logrus.Errorf(msg)
+				return fmt.Errorf(msg)
 			} else {
 				instances := []*clusterInstance{}
 				for i := 0; i < cl.Instances; i++ {
-					cluster, err := provider.CreateCluster(cl)
+					cluster, err := provider.CreateCluster(cl, ctx.factory)
 					if err != nil {
-						logrus.Errorf("Failed to create cluster instance. Error %v", err)
-						os.Exit(1)
+						msg := fmt.Sprintf("Failed to create cluster instance. Error %v", err)
+						logrus.Errorf(msg)
+						return fmt.Errorf(msg)
 					}
 					instances = append(instances, &clusterInstance{
 						instance:  cluster,
 						startTime: time.Now(),
 						state:     clusterAdded,
-						id:        fmt.Sprintf("%s-%d", cl.Name, i),
+						id:        cluster.GetId(),
 					})
+				}
+				if len(instances) == 0 {
+					msg := fmt.Sprintf("No instances are specified for %s.", cl.Name)
+					logrus.Errorf(msg)
+					return fmt.Errorf(msg)
 				}
 				ctx.clusters = append(ctx.clusters, &clustersGroup{
 					provider:  provider,
@@ -681,30 +703,49 @@ func (ctx *executionContext) createClusters() {
 		}
 	}
 	if len(ctx.clusters) == 0 {
-		logrus.Errorf("There is no clusters defined. Exiting...")
-		os.Exit(1)
+		msg := "There is no clusters defined. Exiting..."
+		logrus.Errorf(msg)
+		return fmt.Errorf(msg)
 	}
+	return nil
 }
 
 func (ctx *executionContext) findTests() {
 	logrus.Infof("Finding tests")
+	testsMap := map[string]*TestEntry{}
 	for _, exec := range ctx.cloudTestConfig.Executions {
+		st := time.Now()
 		execTests, err := GetTestConfiguration(ctx.manager, exec.PackageRoot, exec.Tags)
 		if err != nil {
 			logrus.Errorf("Failed during test lookup %v", err)
 		}
+		logrus.Infof("Tests found: %v Elapsed: %v", len(execTests), time.Since(st))
 		for _, t := range execTests {
 			t.ExecutionConfig = exec
+			if existing, ok := testsMap[t.Name]; ok {
+				// Test is already added
+				if existing.Tags != "" && t.Tags == "" {
+					// test without tags are in priority
+					testsMap[t.Name] = t
+				}
+			} else {
+				testsMap[t.Name] = t
+			}
 		}
-		ctx.tests = append(ctx.tests, execTests...)
 	}
+	// If we have execution without tags, we need to remove all tests from it from tagged executions.
+
+	for _, v := range testsMap {
+		ctx.tests = append(ctx.tests, v)
+	}
+
 	logrus.Infof("Total tests found: %v", len(ctx.tests))
 	if len(ctx.tests) == 0 {
 		logrus.Errorf("There is no tests defined. Exiting...")
 	}
 }
 
-func (ctx *executionContext) generateJUnitReportFile() int {
+func (ctx *executionContext) generateJUnitReportFile() (error, *reporting.JUnitFile) {
 	// generate and write report
 	ctx.report = &reporting.JUnitFile{
 	}
@@ -769,8 +810,13 @@ func (ctx *executionContext) generateJUnitReportFile() int {
 	if err != nil {
 		logrus.Errorf("Failed to store JUnit xml report: %v\n", err)
 	}
-	ctx.manager.AddFile(ctx.cloudTestConfig.Reporting.JUnitReportFile, output)
-	return totalFailures
+	if ctx.cloudTestConfig.Reporting.JUnitReportFile != "" {
+		ctx.manager.AddFile(ctx.cloudTestConfig.Reporting.JUnitReportFile, output)
+	}
+	if totalFailures > 0 {
+		return fmt.Errorf("There is failed tests %v", totalFailures), ctx.report
+	}
+	return nil, ctx.report
 }
 
 func (ctx *executionContext) setClusterState(group *clustersGroup, instance *clusterInstance, op func(cluster *clusterInstance)) {
@@ -779,16 +825,17 @@ func (ctx *executionContext) setClusterState(group *clustersGroup, instance *clu
 	op(instance)
 }
 
-func createClusterProviders(manager execmanager.ExecutionManager) map[string]providers.ClusterProvider {
+func createClusterProviders(manager execmanager.ExecutionManager) (map[string]providers.ClusterProvider, error) {
 	clusterProviders := map[string]providers.ClusterProvider{}
 	for key, factory := range providers.ClusterProviderFactories {
 		if _, ok := clusterProviders[key]; ok {
-			logrus.Errorf("Re-definition of cluster provider... Exiting")
-			os.Exit(1)
+			msg := fmt.Sprintf("Re-definition of cluster provider... Exiting")
+			logrus.Errorf(msg)
+			return nil, fmt.Errorf(msg)
 		}
 		clusterProviders[key] = factory(manager.GetRoot(key))
 	}
-	return clusterProviders
+	return clusterProviders, nil
 }
 
 func ExecuteCloudTest() {
