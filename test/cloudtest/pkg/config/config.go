@@ -11,6 +11,7 @@ type ClusterProviderConfig struct {
 	Enabled bool `yaml:"enabled"` // Is it enabled by default or not
 	Parameters map[string]string `yaml:"parameters"` // A parameters specific for provider
 	Env []string `yaml:"env"` // Extra environment variables
+	EnvCheck []string `yaml:"env-check"` // Check if environment has required environment variables pressent.
 }
 
 type ExecutionConfig struct { // Executions, every execution execute some tests agains configured set of clusters

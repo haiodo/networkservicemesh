@@ -6,6 +6,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 )
 
@@ -14,7 +15,7 @@ type ExecutionManager interface {
 	OpenFileTest(category, testname, operation string) (string, *os.File, error)
 	AddLog(category, operationName, content string)
 	OpenFile(category, operationName string) (string, *os.File, error)
-	GetRoot(root string) string
+	GetRoot(root string) (string,error)
 	AddFile(fileName string, bytes []byte)
 }
 
@@ -74,20 +75,20 @@ func (mgr *executionManagerImpl) AddLog(category, operationName, content string)
 	utils.WriteFile(path.Join(mgr.root, category), fmt.Sprintf("%s-%s.log", cat, operationName), content)
 }
 
-func (mgr *executionManagerImpl) GetRoot(root string) string {
+func (mgr *executionManagerImpl) GetRoot(root string) (string, error) {
 	mgr.Lock()
 	defer mgr.Unlock()
 	initPath := path.Join(mgr.root, root)
 	if !utils.FolderExists(initPath) {
 		utils.CreateFolders(initPath)
-		return initPath
+		return filepath.Abs(initPath)
 	} else {
 		index := 2
 		for {
 			initPath := path.Join(mgr.root, fmt.Sprintf("%s-%d", root, index))
 			if !utils.FolderExists(initPath) {
 				utils.CreateFolders(initPath)
-				return initPath
+				return filepath.Abs(initPath)
 			}
 			index++
 		}

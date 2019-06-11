@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/k8s"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
 	"github.com/sirupsen/logrus"
+	"math/rand"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -18,16 +21,17 @@ import (
 )
 
 const (
-	ShellConfigScript  = "config"
-	ShellInstallScript = "install"
-	ShellStartScript   = "start"
+	ShellInstallScript = "install" //#1
+	ShellStartScript   = "start"   //#2
+	ShellConfigScript  = "config"  //#3
 	ShellPrepareScript = "prepare"
 	ShellStopScript    = "stop"
 	ShellKeepAlive     = "keep-alive"
+	ShellZoneSelector  = "zone-selector"
 )
 
 type shellProvider struct {
-	root  string
+	root    string
 	indexes map[string]int
 	sync.Mutex
 	clusters    []shellInstance
@@ -35,21 +39,23 @@ type shellProvider struct {
 }
 
 type shellInstance struct {
-	root           string
-	id             string
-	config         *config.ClusterProviderConfig
-	started        bool
-	startFailed    int
-	keepAlive      bool
-	configLocation string
-	configScript   string
-	installScript  []string
-	startScript    []string
-	prepareScript  []string
-	stopScript     []string
-	provider       *shellProvider
-	factory        k8s.ValidationFactory
-	validator      k8s.KubernetesValidator
+	root               string
+	id                 string
+	config             *config.ClusterProviderConfig
+	processedEnv       []string
+	started            bool
+	startFailed        int
+	keepAlive          bool
+	configLocation     string
+	configScript       string
+	installScript      []string
+	startScript        []string
+	prepareScript      []string
+	stopScript         []string
+	zoneSelectorScript string
+	provider           *shellProvider
+	factory            k8s.ValidationFactory
+	validator          k8s.KubernetesValidator
 }
 
 func (si *shellInstance) GetId() string {
@@ -74,15 +80,55 @@ func (si *shellInstance) GetClusterConfig() (string, error) {
 	return "", fmt.Errorf("Cluster is not started yet...")
 }
 
-func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout time.Duration) error {
+func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout time.Duration, doInstallStep bool) error {
 	logrus.Infof("Starting cluster %s-%s", si.config.Name, si.id)
 
 	context, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// Process environment variable values
+
+	si.processedEnv = os.Environ()
+	// Set seed
+	rand.Seed(time.Now().UnixNano())
+
+	utils.ClearFolder(si.root, true)
+
 	// Do prepare
-	if err := si.doInstall(manager, context); err != nil {
-		return err
+	if doInstallStep {
+		if err := si.doInstall(manager, context); err != nil {
+			return err
+		}
+	}
+
+	selectedZone := ""
+
+	if si.zoneSelectorScript != "" {
+		zones, err := utils.ExecRead(context, strings.Split(si.zoneSelectorScript, " "))
+		if err != nil {
+			logrus.Errorf("Failed to select zones...")
+			return err
+		}
+		selectedZone += zones[rand.Intn(len(zones)-1)]
+	}
+
+	for _, varName := range si.config.Env {
+		finalVar := varName
+		randValue := fmt.Sprintf("%v", rand.Intn(1000000))
+		uuidValue := uuid.New().String()[:30]
+		finalVar = strings.Replace(finalVar, "$(cluster-name)", si.id, -1)
+		finalVar = strings.Replace(finalVar, "$(provider-name)", si.config.Name, -1)
+		finalVar = strings.Replace(finalVar, "$(random)", randValue, -1)
+		finalVar = strings.Replace(finalVar, "$(uuid)", uuidValue, -1)
+		finalVar = strings.Replace(finalVar, "$(tempdir)", si.root, -1)
+		finalVar = strings.Replace(finalVar, "$(zone-selector)", selectedZone, -1)
+
+		p := "KUBECONFIG="
+		if strings.HasPrefix(finalVar, p ) {
+			si.configLocation=finalVar[len(p):]
+		}
+
+		si.processedEnv = append(si.processedEnv, finalVar)
 	}
 
 	// Run start script
@@ -90,15 +136,22 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 		return err
 	}
 
-	output, err := utils.ExecRead(context, strings.Split(si.configScript, " "))
+	if si.configLocation == "" {
+		output, err := utils.ExecRead(context, strings.Split(si.configScript, " "))
+		if err != nil {
+			msg := fmt.Sprintf("Failed to retrieve configuration location %v", err)
+			logrus.Errorf(msg)
+			return err
+		}
+		si.configLocation = output[0]
+	}
+	var err error
+	si.validator, err = si.factory.CreateValidator(si.config, si.configLocation)
 	if err != nil {
-		msg := fmt.Sprintf("Failed to retrieve configuration location %v", err)
+		msg := fmt.Sprintf("Failed to start validator %v", err)
 		logrus.Errorf(msg)
 		return err
 	}
-
-	si.configLocation = output[0]
-	si.validator, err = si.factory.CreateValidator(si.config, si.configLocation)
 	// Run prepare script
 	if err := si.runCmd(manager, context, "prepare", si.prepareScript, []string{"KUBECONFIG=" + si.configLocation}); err != nil {
 		return err
@@ -123,7 +176,7 @@ func (si *shellInstance) GetRoot() string {
 func (si *shellInstance) runCommand(context context.Context, cmd, fileName string, writer *bufio.Writer, env []string) error {
 	cmdLine := strings.Split(cmd, " ")
 
-	proc, err := utils.ExecProc(context, cmdLine, append(si.config.Env, env...))
+	proc, err := utils.ExecProc(context, cmdLine, append(si.processedEnv, env...))
 	if err != nil {
 		return fmt.Errorf("Failed to run %s %v", cmdLine, err)
 	}
@@ -137,6 +190,18 @@ func (si *shellInstance) runCommand(context context.Context, cmd, fileName strin
 			_, _ = writer.WriteString(s)
 			_ = writer.Flush()
 			logrus.Infof("Output: %s => %s %v", si.id, cmd, s)
+		}
+	}()
+	go func() {
+		reader := bufio.NewReader(proc.Stderr)
+		for {
+			s, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			_, _ = writer.WriteString(s)
+			_ = writer.Flush()
+			logrus.Infof("StdErr: %s => %s %v", si.id, cmd, s)
 		}
 	}()
 	if code := proc.ExitCode(); code != 0 {
@@ -181,7 +246,7 @@ func (si *shellInstance) runCmd(manager execmanager.ExecutionManager, context co
 		if len(strings.TrimSpace(cmd)) == 0 {
 			continue
 		}
-		_, _ = writer.WriteString(fmt.Sprintf("%s: %v\n", operation, cmd))
+		_, _ = writer.WriteString(fmt.Sprintf("%s: %v\n ENV=%v\n", operation, cmd, strings.Join(si.processedEnv, "\n")))
 		_ = writer.Flush()
 		logrus.Infof("%s: %s => %s", operation, si.id, cmd)
 
@@ -215,16 +280,17 @@ func (p *shellProvider) CreateCluster(config *config.ClusterProviderConfig, fact
 	id := fmt.Sprintf("%s-%s", config.Name, p.getProviderId(config.Name))
 
 	clusterInstance := &shellInstance{
-		provider:      p,
-		root:          path.Join(p.root, id),
-		id:            id,
-		config:        config,
-		configScript:  config.Parameters[ShellConfigScript],
-		installScript: p.parseScript(config.Parameters[ShellInstallScript]),
-		startScript:   p.parseScript(config.Parameters[ShellStartScript]),
-		prepareScript: p.parseScript(config.Parameters[ShellPrepareScript]),
-		stopScript:    p.parseScript(config.Parameters[ShellStopScript]),
-		factory:       factory,
+		provider:           p,
+		root:               path.Join(p.root, id),
+		id:                 id,
+		config:             config,
+		configScript:       config.Parameters[ShellConfigScript],
+		installScript:      p.parseScript(config.Parameters[ShellInstallScript]),
+		startScript:        p.parseScript(config.Parameters[ShellStartScript]),
+		prepareScript:      p.parseScript(config.Parameters[ShellPrepareScript]),
+		stopScript:         p.parseScript(config.Parameters[ShellStopScript]),
+		zoneSelectorScript: config.Parameters[ShellZoneSelector],
+		factory:            factory,
 	}
 
 	if value, err := strconv.ParseBool(config.Parameters[ShellKeepAlive]); err == nil {
@@ -242,16 +308,25 @@ func init() {
 func NewShellClusterProvider(root string) providers.ClusterProvider {
 	utils.ClearFolder(root, true)
 	return &shellProvider{
-		root:     root,
-		clusters: []shellInstance{},
-		indexes: map[string]int{},
+		root:        root,
+		clusters:    []shellInstance{},
+		indexes:     map[string]int{},
 		installDone: map[string]bool{},
 	}
 }
 
 func (p *shellProvider) ValidateConfig(config *config.ClusterProviderConfig) error {
 	if _, ok := config.Parameters[ShellConfigScript]; !ok {
-		return fmt.Errorf("Invalid config location")
+		hasKubeConfig := false
+		for _, e := range config.Env {
+			if strings.HasPrefix(e, "KUBECONFIG=") {
+				hasKubeConfig = true
+				break
+			}
+		}
+		if !hasKubeConfig {
+			return fmt.Errorf("Invalid config location")
+		}
 	}
 	if _, ok := config.Parameters[ShellStartScript]; !ok {
 		return fmt.Errorf("Invalid start script")
@@ -259,6 +334,14 @@ func (p *shellProvider) ValidateConfig(config *config.ClusterProviderConfig) err
 	if _, ok := config.Parameters[ShellStopScript]; !ok {
 		return fmt.Errorf("Invalid shutdown script location")
 	}
+
+	for _, envVar := range config.EnvCheck {
+		envValue := os.Getenv(envVar)
+		if envValue == "" {
+			return fmt.Errorf("Environment variable are not specified %s Required variables: %v", envValue, config.EnvCheck)
+		}
+	}
+
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/networkservicemesh/networkservicemesh/pkg/tools"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/k8s"
@@ -42,6 +43,7 @@ type Arguments struct {
 	onlyEnabled    bool     // Disable all clusters and enable only enabled in command line.
 	count          int      // Limit number of tests to be run per every cloud
 	noStop         bool     // Disable stop operation
+	noInstall      bool     // Disable install steps
 }
 
 var cmdArguments *Arguments = &Arguments{
@@ -158,7 +160,9 @@ func PerformTesting(config *config.CloudTestConfig, factory k8s.ValidationFactor
 	defer ctx.performShutdown()
 	// Fill tasks to be executed..
 	ctx.createTasks()
+
 	ctx.performExecution()
+
 	return ctx.generateJUnitReportFile()
 }
 
@@ -182,7 +186,6 @@ func (ctx *executionContext) performShutdown() {
 				logrus.Infof("Schedule Closing cluster %v %v", group.config.Name, curInst.id)
 				wg.Add(1)
 
-
 				go func() {
 					defer wg.Done()
 					logrus.Infof("Closing cluster %v %v", group.config.Name, curInst.id)
@@ -199,14 +202,22 @@ func (ctx *executionContext) performExecution() {
 	logrus.Infof("Starting test execution")
 	ctx.startTime = time.Now()
 	ctx.clusterReadyTime = ctx.startTime
+
+	termChannel := tools.NewOSSignalChannel()
+	terminated := false
 	for len(ctx.tasks) > 0 || len(ctx.running) > 0 {
 		// WE take 1 test task from list and do execution.
-
+		if terminated {
+			break
+		}
 		if len(ctx.tasks) > 0 {
 			// Lets check if we have cluster required and start it
 			// Check if we have cluster we could assign.
 			newTasks := []*testTask{}
 			for _, task := range ctx.tasks {
+				if terminated {
+					break
+				}
 				assigned := false
 				clustersToUse := []*clusterInstance{}
 
@@ -215,16 +226,20 @@ func (ctx *executionContext) performExecution() {
 				clustersAvailable := 0
 
 				for _, ci := range task.cluster.instances {
+					if terminated {
+						break
+					}
+					ciref := ci
 					// No task is assigned for cluster.
-					switch ci.state {
+					switch ciref.state {
 					case clusterAdded, clusterCrashed:
 						// Try starting cluster
-						ctx.startCluster(task.cluster, ci)
+						ctx.startCluster(task.cluster, ciref)
 						clustersAvailable++
 					case clusterReady:
 						// Check if we match requirements.
 						// We could assign task and start it running.
-						clustersToUse = append(clustersToUse, ci)
+						clustersToUse = append(clustersToUse, ciref)
 						// We need to remove task from list
 						assigned = true
 						clustersAvailable++
@@ -304,6 +319,9 @@ func (ctx *executionContext) performExecution() {
 			}
 		case <-time.After(10 * time.Second):
 			ctx.printStatistics()
+		case <-termChannel:
+			logrus.Errorf("Termination request is received")
+			terminated = true
 		}
 	}
 	logrus.Infof("Completed tasks %v", len(ctx.completed))
@@ -538,7 +556,7 @@ func (ctx *executionContext) startCluster(group *clustersGroup, ci *clusterInsta
 	go func() {
 		timeout := ctx.getClusterTimeout(group)
 		ci.startCount++
-		err := ci.instance.Start(ctx.manager, timeout)
+		err := ci.instance.Start(ctx.manager, timeout, !cmdArguments.noInstall)
 		if err != nil {
 			ctx.destroyCluster(group, ci, true)
 			ctx.setClusterState(group, ci, func(ci *clusterInstance) {
@@ -833,7 +851,12 @@ func createClusterProviders(manager execmanager.ExecutionManager) (map[string]pr
 			logrus.Errorf(msg)
 			return nil, fmt.Errorf(msg)
 		}
-		clusterProviders[key] = factory(manager.GetRoot(key))
+		root, err := manager.GetRoot(key)
+		if err != nil {
+			logrus.Errorf("Failed to create cluster provider %v", err)
+			return nil, err
+		}
+		clusterProviders[key] = factory(root)
 	}
 	return clusterProviders, nil
 }
@@ -853,6 +876,7 @@ func init() {
 	rootCmd.Flags().IntVarP(&cmdArguments.count, "count", "", -1, "Execute only count of tests")
 
 	rootCmd.Flags().BoolVarP(&cmdArguments.noStop, "noStop", "", false, "Pass to disable stop operations...")
+	rootCmd.Flags().BoolVarP(&cmdArguments.noInstall, "noInstall", "", false, "Pass to disable do install operations...")
 
 	var versionCmd = &cobra.Command{
 		Use:   "version",

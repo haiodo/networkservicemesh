@@ -16,7 +16,7 @@ type ClusterInstance interface {
 	GetClusterConfig() (string, error)
 
 	// Perform startup of cluster
-	Start( manager execmanager.ExecutionManager, timeout time.Duration ) error
+	Start( manager execmanager.ExecutionManager, timeout time.Duration, doInstallStep bool ) error
 	// Destroy cluster
 	// Should destroy cluster with timeout passed, if time is left should report about error.
 	Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error

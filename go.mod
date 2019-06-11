@@ -20,6 +20,7 @@ require (
 	github.com/golang/protobuf v1.3.1
 	github.com/google/go-cmp v0.3.0 // indirect
 	github.com/google/pprof v0.0.0-20190515194954-54271f7e092f // indirect
+	github.com/google/uuid v1.0.0
 	github.com/googleapis/gnostic v0.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-opentracing v0.0.0-20180507213350-8e809c8a8645
 	github.com/hashicorp/golang-lru v0.5.1 // indirect

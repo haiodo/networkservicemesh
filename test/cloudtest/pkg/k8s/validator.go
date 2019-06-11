@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/config"
 	"github.com/sirupsen/logrus"
+	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 )
 
 type KubernetesValidator interface {
@@ -30,7 +31,6 @@ func (v *k8sValidator) Validate() error {
 		return err
 	}
 	if len(nodes) >= requiedNodes {
-		logrus.Infof("Cluster started properly with nodes: %v\n", nodes)
 		return nil
 	}
 	msg := fmt.Sprintf("Cluster doesn't have required number of nodes to be available. Required: %v Available: %v\n", requiedNodes, len(nodes))
