@@ -70,13 +70,13 @@ type clusterInstance struct {
 	taskCancel    context.CancelFunc
 	cancelMonitor context.CancelFunc
 	startTime     time.Time
+	lock      sync.Mutex
 }
 type clustersGroup struct {
 	instances []*clusterInstance
 	provider  providers.ClusterProvider
 	config    *config.ClusterProviderConfig
 	tasks     []*testTask // All tasks assigned to this cluster.
-	lock      sync.Mutex
 }
 
 type testTask struct {
@@ -295,7 +295,7 @@ func (ctx *executionContext) performExecution() {
 				delete(ctx.running, event.task.taskId)
 				// Make cluster as ready
 				for _, inst := range event.task.clusterInstances {
-					ctx.setClusterState(event.task.cluster, inst, func(inst *clusterInstance) {
+					ctx.setClusterState(inst, func(inst *clusterInstance) {
 						if inst.state != clusterCrashed {
 							inst.state = clusterReady
 						}
@@ -407,7 +407,7 @@ func (ctx *executionContext) startTask(task *testTask, instances []*clusterInsta
 		}
 		ids += ci.id
 
-		ctx.setClusterState(task.cluster, ci, func(ci *clusterInstance) {
+		ctx.setClusterState(ci, func(ci *clusterInstance) {
 			ci.state = clusterBusy
 		})
 	}
@@ -539,8 +539,8 @@ func (ctx *executionContext) updateTestExecution(task *testTask, fileName string
 }
 
 func (ctx *executionContext) startCluster(group *clustersGroup, ci *clusterInstance) {
-	group.lock.Lock()
-	defer group.lock.Unlock()
+	ci.lock.Lock()
+	defer ci.lock.Unlock()
 
 	if ci.state != clusterAdded && ci.state != clusterCrashed {
 		// Cluster is already starting.
@@ -559,7 +559,7 @@ func (ctx *executionContext) startCluster(group *clustersGroup, ci *clusterInsta
 		err := ci.instance.Start(ctx.manager, timeout, !cmdArguments.noInstall)
 		if err != nil {
 			ctx.destroyCluster(group, ci, true)
-			ctx.setClusterState(group, ci, func(ci *clusterInstance) {
+			ctx.setClusterState(ci, func(ci *clusterInstance) {
 				ci.state = clusterCrashed
 			})
 		}
@@ -599,7 +599,7 @@ func (ctx *executionContext) monitorCluster(context context.Context, ci *cluster
 
 		if checks == 0 {
 			// Initial check performed, we need to make cluster ready.
-			ctx.setClusterState(group, ci, func(ci *clusterInstance) {
+			ctx.setClusterState(ci, func(ci *clusterInstance) {
 				ci.state = clusterReady
 				ci.startTime = time.Now()
 			})
@@ -623,8 +623,8 @@ func (ctx *executionContext) monitorCluster(context context.Context, ci *cluster
 }
 
 func (ctx *executionContext) destroyCluster(group *clustersGroup, ci *clusterInstance, sendUpdate bool) {
-	group.lock.Lock()
-	defer group.lock.Unlock()
+	ci.lock.Lock()
+	defer ci.lock.Unlock()
 
 	if ci.cancelMonitor != nil {
 		ci.cancelMonitor()
@@ -652,9 +652,7 @@ func (ctx *executionContext) destroyCluster(group *clustersGroup, ci *clusterIns
 		logrus.Infof("Cluster stop wormup timeout specified %v", group.config.StopDelay)
 		<-time.After(time.Duration(group.config.StopDelay) * time.Second)
 	}
-
 	ci.state = clusterCrashed
-
 	if sendUpdate {
 		ctx.operationChannel <- operationEvent{
 			cluster:         group,
@@ -837,9 +835,9 @@ func (ctx *executionContext) generateJUnitReportFile() (error, *reporting.JUnitF
 	return nil, ctx.report
 }
 
-func (ctx *executionContext) setClusterState(group *clustersGroup, instance *clusterInstance, op func(cluster *clusterInstance)) {
-	group.lock.Lock()
-	defer group.lock.Unlock()
+func (ctx *executionContext) setClusterState(instance *clusterInstance, op func(cluster *clusterInstance)) {
+	instance.lock.Lock()
+	defer instance.lock.Unlock()
 	op(instance)
 }
 
