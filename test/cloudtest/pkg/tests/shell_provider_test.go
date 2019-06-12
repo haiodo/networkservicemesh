@@ -45,65 +45,52 @@ func TestShellProvider(t *testing.T) {
 	Expect(err).To(BeNil())
 
 	testConfig.ConfigRoot = tmpDir
-	testConfig.Providers = append(testConfig.Providers, &config.ClusterProviderConfig{
-		Timeout:    30,
-		Name:       "a_provider",
-		NodeCount:  1,
-		Kind:       "shell",
-		RetryCount: 1,
-		Instances:  2,
-		Parameters: map[string]string{
-			shell.ShellConfigScript:  "echo ./.tests/config",
-			shell.ShellStartScript:   "echo started",
-			shell.ShellPrepareScript: "echo prepared",
-			shell.ShellInstallScript: "echo installed",
-			shell.ShellStopScript:    "echo stopped",
-		},
-		Enabled: true,
-	})
-
-	testConfig.Providers = append(testConfig.Providers, &config.ClusterProviderConfig{
-		Timeout:    100,
-		Name:       "b_provider",
-		NodeCount:  1,
-		Kind:       "shell",
-		RetryCount: 1,
-		Instances:  2,
-		Parameters: map[string]string{
-			shell.ShellConfigScript:  "echo ./.tests/config",
-			shell.ShellStartScript:   "echo started",
-			shell.ShellPrepareScript: "echo prepared",
-			shell.ShellInstallScript: "echo installed",
-			shell.ShellStopScript:    "echo stopped",
-		},
-		Enabled: true,
-	})
+	createProvider(testConfig, "a_provider")
+	createProvider(testConfig, "b_provider")
 
 	testConfig.Executions = append(testConfig.Executions, &config.ExecutionConfig{
 		Name:        "simple",
-		Timeout:     2,
+		Timeout:     15,
 		PackageRoot: "./sample",
 	})
 
 	testConfig.Executions = append(testConfig.Executions, &config.ExecutionConfig{
 		Name:        "simple_tagged",
-		Timeout:     2,
+		Timeout:     15,
 		Tags:        []string{"basic"},
 		PackageRoot: "./sample",
 	})
 
 	err, report := commands.PerformTesting(testConfig, &testValidationFactory{})
-	Expect(err.Error()).To(Equal("There is failed tests 8"))
+	Expect(err.Error()).To(Equal("There is failed tests 4"))
 
 	Expect(report).NotTo(BeNil())
 
 	Expect(len(report.Suites)).To(Equal(2))
-	Expect(report.Suites[0].Failures).To(Equal(4))
+	Expect(report.Suites[0].Failures).To(Equal(2))
 	Expect(report.Suites[0].Tests).To(Equal(6))
 	Expect(len(report.Suites[0].TestCases)).To(Equal(6))
-	Expect(report.Suites[0].Failures).To(Equal(4))
 
 	// Do assertions
+}
+
+func createProvider(testConfig *config.CloudTestConfig, name string) {
+	testConfig.Providers = append(testConfig.Providers, &config.ClusterProviderConfig{
+		Timeout:    100,
+		Name:       name,
+		NodeCount:  1,
+		Kind:       "shell",
+		RetryCount: 1,
+		Instances:  2,
+		Parameters: map[string]string{
+			shell.ShellConfigScript:  "echo ./.tests/config",
+			shell.ShellStartScript:   "echo started",
+			shell.ShellPrepareScript: "echo prepared",
+			shell.ShellInstallScript: "echo installed",
+			shell.ShellStopScript:    "echo stopped",
+		},
+		Enabled: true,
+	})
 }
 
 func TestInvalidProvider(t *testing.T) {
@@ -119,22 +106,8 @@ func TestInvalidProvider(t *testing.T) {
 	Expect(err).To(BeNil())
 
 	testConfig.ConfigRoot = tmpDir
-	testConfig.Providers = append(testConfig.Providers, &config.ClusterProviderConfig{
-		Timeout:    30,
-		Name:       "a_provider",
-		NodeCount:  1,
-		Kind:       "shell",
-		RetryCount: 1,
-		Instances:  2,
-		Parameters: map[string]string{
-			shell.ShellConfigScript:  "echo ./.tests/config",
-			shell.ShellStartScript:   "echo started",
-			shell.ShellPrepareScript: "echo prepared",
-			shell.ShellInstallScript: "echo installed",
-			shell.ShellStopScript:    "echo stopped",
-		},
-		Enabled: true,
-	})
+	createProvider(testConfig, "a_provider")
+	delete(testConfig.Providers[0].Parameters, shell.ShellStartScript)
 
 	testConfig.Executions = append(testConfig.Executions, &config.ExecutionConfig{
 		Name:        "simple",
@@ -143,16 +116,42 @@ func TestInvalidProvider(t *testing.T) {
 	})
 
 	err, report := commands.PerformTesting(testConfig, &testValidationFactory{})
-	Expect(err.Error()).To(Equal("There is failed tests 4"))
+	Expect(err.Error()).To(Equal("Failed to create cluster instance. Error Invalid start script"))
 
-	Expect(report).NotTo(BeNil())
+	Expect(report).To(BeNil())
+	// Do assertions
+}
 
-	Expect(len(report.Suites)).To(Equal(1))
-	Expect(report.Suites[0].Failures).To(Equal(2))
-	Expect(report.Suites[0].Tests).To(Equal(3))
-	Expect(len(report.Suites[0].TestCases)).To(Equal(3))
-	Expect(report.Suites[0].Failures).To(Equal(2))
+func TestRequireEnvVars(t *testing.T) {
+	RegisterTestingT(t)
 
+	testConfig := &config.CloudTestConfig{
+	}
+
+	testConfig.Timeout = 300
+
+	tmpDir, err := ioutil.TempDir(os.TempDir(), "cloud-test-temp")
+	defer utils.ClearFolder(tmpDir, false)
+	Expect(err).To(BeNil())
+
+	testConfig.ConfigRoot = tmpDir
+
+	createProvider(testConfig, "a_provider")
+
+	testConfig.Providers[0].EnvCheck = append(testConfig.Providers[0].EnvCheck, []string{
+		"KUBECONFIG", "QWE",
+	}...)
+
+	testConfig.Executions = append(testConfig.Executions, &config.ExecutionConfig{
+		Name:        "simple",
+		Timeout:     2,
+		PackageRoot: "./sample",
+	})
+
+	err, report := commands.PerformTesting(testConfig, &testValidationFactory{})
+	Expect(err.Error()).To(Equal("Failed to create cluster instance. Error Environment variable are not specified  Required variables: [KUBECONFIG QWE]"))
+
+	Expect(report).To(BeNil())
 	// Do assertions
 }
 
