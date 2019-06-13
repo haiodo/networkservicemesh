@@ -86,9 +86,6 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 	context, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Process environment variable values
-
-	si.processedEnv = os.Environ()
 	// Set seed
 	rand.Seed(time.Now().UnixNano())
 
@@ -101,35 +98,11 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 		}
 	}
 
-	selectedZone := ""
+	// Process and prepare enviorment variables
+	si.processEnvironment(context)
 
-	if si.zoneSelectorScript != "" {
-		zones, err := utils.ExecRead(context, strings.Split(si.zoneSelectorScript, " "))
-		if err != nil {
-			logrus.Errorf("Failed to select zones...")
-			return err
-		}
-		selectedZone += zones[rand.Intn(len(zones)-1)]
-	}
-
-	for _, varName := range si.config.Env {
-		finalVar := varName
-		randValue := fmt.Sprintf("%v", rand.Intn(1000000))
-		uuidValue := uuid.New().String()[:30]
-		finalVar = strings.Replace(finalVar, "$(cluster-name)", si.id, -1)
-		finalVar = strings.Replace(finalVar, "$(provider-name)", si.config.Name, -1)
-		finalVar = strings.Replace(finalVar, "$(random)", randValue, -1)
-		finalVar = strings.Replace(finalVar, "$(uuid)", uuidValue, -1)
-		finalVar = strings.Replace(finalVar, "$(tempdir)", si.root, -1)
-		finalVar = strings.Replace(finalVar, "$(zone-selector)", selectedZone, -1)
-
-		p := "KUBECONFIG="
-		if strings.HasPrefix(finalVar, p ) {
-			si.configLocation=finalVar[len(p):]
-		}
-
-		si.processedEnv = append(si.processedEnv, finalVar)
-	}
+	printableEnv := si.printEnv(si.processedEnv)
+	manager.AddLog(si.id, "environment", printableEnv)
 
 	// Run start script
 	if err := si.runCmd(manager, context, "start", si.startScript, nil); err != nil {
@@ -161,6 +134,144 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 
 	return nil
 }
+
+func parseVariable(variable string) (string, string, error) {
+	pos := strings.Index(variable, "=")
+	if pos == -1 {
+		return "", "", fmt.Errorf("Variable passed are invalid...")
+	}
+	return variable[:pos], variable[pos+1:], nil
+}
+
+
+func substituteVariable( variable string, vars map[string]string, args map[string]string) (string, error) {
+
+	pos := 0
+	result := strings.Builder{}
+
+	count := len(variable)
+
+	for ;pos < count; {
+
+		charAt := variable[pos]
+
+		if charAt == '$' {
+			if pos + 1 < count {
+				// We have more symbols to check
+				nextChar := variable[pos+1]
+
+				if nextChar == '{' {
+					// This is variable substitution
+					pos += 2
+					var varName string
+					varName, pos = readString(pos, count, variable, '}')
+
+					// We found variable or reached end of string
+					if varValue, ok := vars[varName]; ok {
+						result.WriteString(varValue)
+					} else {
+						return "", fmt.Errorf("Failed to find variable %v in passed variables", varName)
+					}
+
+				} else if nextChar == '(' {
+					// This is parameter substituion
+					pos += 2
+					var varName string
+					varName, pos = readString(pos, count, variable, ')')
+
+					// We found variable or reached end of string
+					if argValue, ok := args[varName]; ok {
+						result.WriteString(argValue)
+					} else {
+						return "", fmt.Errorf("Failed to find argument %v in passed arguments", varName)
+					}
+				}
+
+			} else {
+				// End of string just add symbol to result
+				result.WriteByte(charAt)
+			}
+		} else {
+			result.WriteByte(charAt)
+		}
+
+		pos++
+	}
+	return result.String(), nil
+
+}
+
+func readString(pos int, count int, variable string, delim uint8) (string, int) {
+	varName := strings.Builder{}
+	for ; pos < count; {
+		tChar := variable[pos]
+		if tChar == delim {
+			break
+		} else {
+			varName.WriteByte(tChar)
+		}
+		pos++
+	}
+	return varName.String(), pos
+}
+
+func (si *shellInstance) processEnvironment(context context.Context) error {
+
+	selectedZone := ""
+
+	if si.zoneSelectorScript != "" {
+		zones, err := utils.ExecRead(context, strings.Split(si.zoneSelectorScript, " "))
+		if err != nil {
+			logrus.Errorf("Failed to select zones...")
+			return err
+		}
+		selectedZone += zones[rand.Intn(len(zones)-1)]
+	}
+
+	environment := map[string]string{}
+
+	for _, k := range os.Environ() {
+		key, value, err := parseVariable(k)
+		if err != nil {
+			return err
+		}
+		environment[key] = value
+	}
+
+	for _, varName := range si.config.Env {
+		varName, varValue, err := parseVariable(varName)
+		if err != nil {
+			return err
+		}
+		randValue := fmt.Sprintf("%v", rand.Intn(1000000))
+		uuidValue := uuid.New().String()[:30]
+
+		args := map[string]string{
+			"cluster-name": si.id,
+			"provider-name": si.config.Name,
+			"random": randValue,
+			"uuid": uuidValue,
+			"tempdir": si.root,
+			"zone-selector": selectedZone,
+		}
+
+		varValue, err = substituteVariable(varValue, environment, args)
+		if err != nil {
+			return err
+		}
+
+
+		// Now we need to parse  line and replace all ${VAR_NAME} with real and processed environment variables.
+
+		if varName == "KUBECONFIG" {
+			si.configLocation = varValue
+		}
+
+		environment[varName] = varValue
+		si.processedEnv = append(si.processedEnv, fmt.Sprintf("%s=%s", varName, varValue))
+	}
+	return nil
+}
 func (si *shellInstance) Destroy(manager execmanager.ExecutionManager, timeout time.Duration) error {
 	logrus.Infof("Destroying cluster  %s", si.id)
 
@@ -176,7 +287,8 @@ func (si *shellInstance) GetRoot() string {
 func (si *shellInstance) runCommand(context context.Context, cmd, fileName string, writer *bufio.Writer, env []string) error {
 	cmdLine := strings.Split(cmd, " ")
 
-	proc, err := utils.ExecProc(context, cmdLine, append(si.processedEnv, env...))
+	finalEnv := append(os.Environ(), env...)
+	proc, err := utils.ExecProc(context, cmdLine, finalEnv)
 	if err != nil {
 		return fmt.Errorf("Failed to run %s %v", cmdLine, err)
 	}
@@ -246,17 +358,36 @@ func (si *shellInstance) runCmd(manager execmanager.ExecutionManager, context co
 		if len(strings.TrimSpace(cmd)) == 0 {
 			continue
 		}
-		_, _ = writer.WriteString(fmt.Sprintf("%s: %v\n ENV=%v\n", operation, cmd, strings.Join(si.processedEnv, "\n")))
+
+		cmdEnv := append(si.processedEnv, env...)
+		printableEnv := si.printEnv(env)
+
+		_, _ = writer.WriteString(fmt.Sprintf("%s: %v\nENV={\n%v\n}\n", operation, cmd, printableEnv))
 		_ = writer.Flush()
+
 		logrus.Infof("%s: %s => %s", operation, si.id, cmd)
 
-		if err := si.runCommand(context, cmd, fileName, writer, env); err != nil {
+		if err := si.runCommand(context, cmd, fileName, writer, cmdEnv); err != nil {
 			_, _ = writer.WriteString(fmt.Sprintf("Error running command: %v\n", err))
 			_ = writer.Flush()
 			return err
 		}
 	}
 	return nil
+}
+
+func (si *shellInstance) printEnv(env []string) string {
+	printableEnv := strings.Builder{}
+	for _, cmdEnvValue := range env {
+		varName, varValue, _ := parseVariable(cmdEnvValue)
+		// We need to check if value contains or not some of check env variables and replace their values for safity
+		for _, ce := range si.config.EnvCheck {
+			envValue := os.Getenv(ce)
+			varValue = strings.Replace(varValue, envValue, "****", -1)
+		}
+		printableEnv.WriteString(fmt.Sprintf("%s=%s\n", varName, varValue))
+	}
+	return printableEnv.String()
 }
 
 func (p *shellProvider) getProviderId(provider string) string {
