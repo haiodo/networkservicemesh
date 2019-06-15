@@ -26,3 +26,29 @@ func TestVariableSubstitutions(t *testing.T) {
 	Expect(var1).To(Equal("qwe ~/.kube/config uu-uu BBB"))
 
 }
+
+func TestParseCommandLine1(t *testing.T) {
+	RegisterTestingT(t)
+
+	t.Run("simple", func(t *testing.T) {
+		RegisterTestingT(t)
+		Expect(parseCommandLine("a b c")).To(Equal([]string{"a", "b", "c"}))
+	})
+
+	t.Run("spaces", func(t *testing.T) {
+		RegisterTestingT(t)
+		Expect(parseCommandLine("a\\ b c")).To(Equal([]string{"a b", "c"}))
+	})
+
+	t.Run("strings", func(t *testing.T) {
+		RegisterTestingT(t)
+		Expect(parseCommandLine("a \"b    \" c")).To(Equal([]string{"a", "b    ", "c"}))
+	})
+
+	t.Run("empty_arg", func(t *testing.T) {
+		RegisterTestingT(t)
+		Expect(parseCommandLine("a 	-N \"\"" )).To(Equal([]string{"a", "-N", ""}))
+	})
+
+
+}

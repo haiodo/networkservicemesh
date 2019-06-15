@@ -34,10 +34,10 @@ resource "packet_device" "worker1" {
   depends_on       = ["packet_ssh_key.key"]
 }
 
-output "master.public_ip" {
+output "master_public_ip" {
   value = "${packet_device.master.access_public_ipv4}"
 }
 
-output "worker1.public_ip" {
+output "worker1_public_ip" {
   value = "${packet_device.worker1.access_public_ipv4}"
 }

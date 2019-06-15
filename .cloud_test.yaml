@@ -4,19 +4,19 @@ timeout: 3600 # 1 hour total timeout
 providers:
   - name: "packet"
     kind: "shell"
-    instances: 2
-    retry: 5
+    instances: 1
+    retry: 0
     node-count: 2
     enabled: true
     timeout: 1800 # 30 minutes to start cluster
     env:
       - CLUSTER_RULES_PREFIX=packet
-      - CLUSTER_NAME=$(cluster-name)-$(uuid)
+      - CLUSTERw_NAME=$(cluster-name)-$(uuid)
       - KUBECONFIG=$(tempdir)/config
       - TERRAFORM_ROOT=$(tempdir)/terraform
       - TF_VAR_auth_token=${PACKET_AUTH_TOKEN}
       - TF_VAR_master_hostname=devci-${CLUSTER_NAME}-master
-      - TF_VAR_worker1_hostname=ci-${CLUSTER_NAME}-worker1
+      - TF_VAR_worker1_hostname=devci-${CLUSTER_NAME}-worker1
       - TF_VAR_project_id=${PACKET_PROJECT_ID}
       - TF_VAR_public_key=${TERRAFORM_ROOT}/sshkey.pub
       - TF_VAR_public_key_name=key-${CLUSTER_NAME}
@@ -27,10 +27,10 @@ providers:
       - COMMIT
     parameters:
       install: |
-        mkdir -p $TERRAFORM_ROOT
-        ssh-keygen -t rsa -f $TERRAFORM_ROOT/sshkey -q -N ""
-        ssh-add $TERRAFORM_ROOT/sshkey
-        cp -a scripts/terraform/ $TERRAFORM_ROOT/
+        mkdir -p ${TERRAFORM_ROOT}
+        ssh-keygen -t rsa -f ${TERRAFORM_ROOT}/sshkey -q -N ""
+        ssh-add ${TERRAFORM_ROOT}/sshkey
+        cp -a scripts/terraform/ ${TERRAFORM_ROOT}/
       start: |
         make packet-init
         make packet-start

@@ -91,15 +91,15 @@ func (si *shellInstance) Start(manager execmanager.ExecutionManager, timeout tim
 
 	utils.ClearFolder(si.root, true)
 
+	// Process and prepare enviorment variables
+	si.processEnvironment(context)
+
 	// Do prepare
 	if doInstallStep {
 		if err := si.doInstall(manager, context); err != nil {
 			return err
 		}
 	}
-
-	// Process and prepare enviorment variables
-	si.processEnvironment(context)
 
 	printableEnv := si.printEnv(si.processedEnv)
 	manager.AddLog(si.id, "environment", printableEnv)
@@ -143,6 +143,55 @@ func parseVariable(variable string) (string, string, error) {
 	return variable[:pos], variable[pos+1:], nil
 }
 
+func parseCommandLine(cmdLine string) []string {
+	pos := 0
+	current := strings.Builder{}
+
+	count := len(cmdLine)
+	result := []string{}
+
+	for ;pos < count; {
+
+		charAt := cmdLine[pos]
+
+		if charAt == '\\' {
+			pos++
+			if pos < count {
+				// Write one more symbol
+				current.WriteByte(cmdLine[pos])
+			}
+		} else if charAt == '"' {
+			if current.Len() > 0 {
+				result = append(result, current.String() )
+				current.Reset()
+			}
+			pos++
+			// Read until next " with escaping support
+			str := ""
+			str, pos = readStringEscaping(pos, count, cmdLine,'"')
+			result = append(result, str)
+		} else {
+			//Add skiping spaces.
+			if charAt != ' ' && charAt != '\t' {
+				current.WriteByte(charAt)
+			} else {
+				if current.Len() > 0 {
+					result = append(result, current.String() )
+					current.Reset()
+				}
+			}
+		}
+
+		pos++
+	}
+	if current.Len() > 0 {
+		result = append(result, current.String() )
+		current.Reset()
+	}
+
+	return result
+
+}
 
 func substituteVariable( variable string, vars map[string]string, args map[string]string) (string, error) {
 
@@ -206,6 +255,26 @@ func readString(pos int, count int, variable string, delim uint8) (string, int) 
 	for ; pos < count; {
 		tChar := variable[pos]
 		if tChar == delim {
+			break
+		} else {
+			varName.WriteByte(tChar)
+		}
+		pos++
+	}
+	return varName.String(), pos
+}
+
+func readStringEscaping(pos int, count int, variable string, delim uint8) (string, int) {
+	varName := strings.Builder{}
+	for ; pos < count; {
+		tChar := variable[pos]
+		if tChar == '\\' {
+			pos++
+			if pos < count {
+				// Write one more symbol
+				varName.WriteByte(variable[pos])
+			}
+		} else if tChar == delim {
 			break
 		} else {
 			varName.WriteByte(tChar)
@@ -285,9 +354,24 @@ func (si *shellInstance) GetRoot() string {
 }
 
 func (si *shellInstance) runCommand(context context.Context, cmd, fileName string, writer *bufio.Writer, env []string) error {
-	cmdLine := strings.Split(cmd, " ")
-
 	finalEnv := append(os.Environ(), env...)
+
+	environment := map[string]string{}
+	for _, k := range finalEnv {
+		key, value, err := parseVariable(k)
+		if err != nil {
+			return err
+		}
+		environment[key] = value
+	}
+
+	finalCmd, err := substituteVariable(cmd, environment, map[string]string{})
+	if err != nil {
+		return err
+	}
+
+	cmdLine := parseCommandLine(finalCmd)
+
 	proc, err := utils.ExecProc(context, cmdLine, finalEnv)
 	if err != nil {
 		return fmt.Errorf("Failed to run %s %v", cmdLine, err)
