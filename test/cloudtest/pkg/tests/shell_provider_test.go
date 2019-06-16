@@ -82,12 +82,12 @@ func createProvider(testConfig *config.CloudTestConfig, name string) {
 		Kind:       "shell",
 		RetryCount: 1,
 		Instances:  2,
-		Parameters: map[string]string{
-			shell.ShellConfigScript:  "echo ./.tests/config",
-			shell.ShellStartScript:   "echo started",
-			shell.ShellPrepareScript: "echo prepared",
-			shell.ShellInstallScript: "echo installed",
-			shell.ShellStopScript:    "echo stopped",
+		Scripts: map[string]string{
+			shell.ConfigScript:  "echo ./.tests/config",
+			shell.StartScript:   "echo started",
+			shell.PrepareScript: "echo prepared",
+			shell.InstallScript: "echo installed",
+			shell.StopScript:    "echo stopped",
 		},
 		Enabled: true,
 	})
@@ -107,7 +107,7 @@ func TestInvalidProvider(t *testing.T) {
 
 	testConfig.ConfigRoot = tmpDir
 	createProvider(testConfig, "a_provider")
-	delete(testConfig.Providers[0].Parameters, shell.ShellStartScript)
+	delete(testConfig.Providers[0].Scripts, shell.StartScript)
 
 	testConfig.Executions = append(testConfig.Executions, &config.ExecutionConfig{
 		Name:        "simple",
@@ -200,7 +200,7 @@ func TestRequireEnvVars_DEPS(t *testing.T) {
 	err, report := commands.PerformTesting(testConfig, &testValidationFactory{})
 	Expect(err.Error()).To(Equal("There is failed tests 2"))
 
-	Expect(report).To(BeNil())
+	Expect(report).ToNot(BeNil())
 	// Do assertions
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/execmanager"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/k8s"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers"
+	_ "github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers/packet"
 	_ "github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/providers/shell"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/reporting"
 	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
@@ -38,12 +39,12 @@ var rootCmd = &cobra.Command{
 }
 
 type Arguments struct {
-	providerConfig string   // A folder to start scaning for tests inside.
-	clusters       []string // A list of enabled clusters from configuration.
-	onlyEnabled    bool     // Disable all clusters and enable only enabled in command line.
-	count          int      // Limit number of tests to be run per every cloud
-	noStop         bool     // Disable stop operation
-	noInstall      bool     // Disable install steps
+	providerConfig  string   // A folder to start scaning for tests inside.
+	clusters        []string // A list of enabled clusters from configuration.
+	onlyEnabled     bool     // Disable all clusters and enable only enabled in command line.
+	count           int      // Limit number of tests to be run per every cloud
+	instanceOptions providers.InstanceOptions
+	// Disable masking of checked environment variables
 }
 
 var cmdArguments *Arguments = &Arguments{
@@ -70,7 +71,7 @@ type clusterInstance struct {
 	taskCancel    context.CancelFunc
 	cancelMonitor context.CancelFunc
 	startTime     time.Time
-	lock      sync.Mutex
+	lock          sync.Mutex
 }
 type clustersGroup struct {
 	instances []*clusterInstance
@@ -177,7 +178,7 @@ func parseConfig(cloudTestConfig *config.CloudTestConfig, configFileContent []by
 
 func (ctx *executionContext) performShutdown() {
 	// We need to stop all clusters we started
-	if !cmdArguments.noStop {
+	if !cmdArguments.instanceOptions.NoStop {
 		var wg sync.WaitGroup
 		for _, clG := range ctx.clusters {
 			group := clG
@@ -556,7 +557,7 @@ func (ctx *executionContext) startCluster(group *clustersGroup, ci *clusterInsta
 	go func() {
 		timeout := ctx.getClusterTimeout(group)
 		ci.startCount++
-		err := ci.instance.Start(ctx.manager, timeout, !cmdArguments.noInstall)
+		err := ci.instance.Start(timeout)
 		if err != nil {
 			ctx.destroyCluster(group, ci, true)
 			ctx.setClusterState(ci, func(ci *clusterInstance) {
@@ -630,20 +631,15 @@ func (ctx *executionContext) destroyCluster(group *clustersGroup, ci *clusterIns
 		ci.cancelMonitor()
 	}
 
-	if ci.state == clusterStarting {
-		// This should not happen
-		logrus.Errorf("Panic")
-	}
-
-	if ci.state == clusterCrashed {
-		// It is already destroyed.
+	if ci.state == clusterCrashed || ci.state == clusterNotAvailable {
+		// It is already destroyed or not available.
 		return
 	}
 
 	ci.state = clusterBusy
 
 	timeout := ctx.getClusterTimeout(group)
-	err := ci.instance.Destroy(ctx.manager, timeout)
+	err := ci.instance.Destroy(timeout)
 	if err != nil {
 		logrus.Errorf("Failed to destroy cluster")
 	}
@@ -692,7 +688,7 @@ func (ctx *executionContext) createClusters() error {
 			} else {
 				instances := []*clusterInstance{}
 				for i := 0; i < cl.Instances; i++ {
-					cluster, err := provider.CreateCluster(cl, ctx.factory)
+					cluster, err := provider.CreateCluster(cl, ctx.factory, ctx.manager, cmdArguments.instanceOptions)
 					if err != nil {
 						msg := fmt.Sprintf("Failed to create cluster instance. Error %v", err)
 						logrus.Errorf(msg)
@@ -873,15 +869,16 @@ func init() {
 	rootCmd.Flags().BoolVarP(&cmdArguments.onlyEnabled, "enabled", "e", false, "Use only passed cluster names...")
 	rootCmd.Flags().IntVarP(&cmdArguments.count, "count", "", -1, "Execute only count of tests")
 
-	rootCmd.Flags().BoolVarP(&cmdArguments.noStop, "noStop", "", false, "Pass to disable stop operations...")
-	rootCmd.Flags().BoolVarP(&cmdArguments.noInstall, "noInstall", "", false, "Pass to disable do install operations...")
+	rootCmd.Flags().BoolVarP(&cmdArguments.instanceOptions.NoStop, "noStop", "", false, "Pass to disable stop operations...")
+	rootCmd.Flags().BoolVarP(&cmdArguments.instanceOptions.NoInstall, "noInstall", "", false, "Pass to disable do install operations...")
+	rootCmd.Flags().BoolVarP(&cmdArguments.instanceOptions.NoMaskParameters, "noMask", "", false, "Pass to disable masking of environment variables...")
 
 	var versionCmd = &cobra.Command{
 		Use:   "version",
 		Short: "Print the version number of cloud_test",
-		Long:  `All software has versions. This is Hugo's`,
+		Long:  `All software has versions.`,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Cloud Test v0.9 -- HEAD")
+			fmt.Println("Cloud Test -- HEAD")
 		},
 	}
 	rootCmd.AddCommand(versionCmd)

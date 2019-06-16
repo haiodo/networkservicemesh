@@ -79,14 +79,14 @@ func (mgr *executionManagerImpl) GetRoot(root string) (string, error) {
 	mgr.Lock()
 	defer mgr.Unlock()
 	initPath := path.Join(mgr.root, root)
-	if !utils.FolderExists(initPath) {
+	if !utils.FileExists(initPath) {
 		utils.CreateFolders(initPath)
 		return filepath.Abs(initPath)
 	} else {
 		index := 2
 		for {
 			initPath := path.Join(mgr.root, fmt.Sprintf("%s-%d", root, index))
-			if !utils.FolderExists(initPath) {
+			if !utils.FileExists(initPath) {
 				utils.CreateFolders(initPath)
 				return filepath.Abs(initPath)
 			}

@@ -1,6 +1,7 @@
-package shell
+package tests
 
 import (
+	"github.com/networkservicemesh/networkservicemesh/test/cloudtest/pkg/utils"
 	. "github.com/onsi/gomega"
 	"testing"
 )
@@ -21,7 +22,7 @@ func TestVariableSubstitutions(t *testing.T) {
 		"zone-selector": "zone",
 	}
 
-	var1, err := substituteVariable("qwe ${KUBECONFIG} $(uuid) BBB", env, args)
+	var1, err := utils.SubstituteVariable("qwe ${KUBECONFIG} $(uuid) BBB", env, args)
 	Expect(err).To(BeNil())
 	Expect(var1).To(Equal("qwe ~/.kube/config uu-uu BBB"))
 
@@ -32,22 +33,22 @@ func TestParseCommandLine1(t *testing.T) {
 
 	t.Run("simple", func(t *testing.T) {
 		RegisterTestingT(t)
-		Expect(parseCommandLine("a b c")).To(Equal([]string{"a", "b", "c"}))
+		Expect(utils.ParseCommandLine("a b c")).To(Equal([]string{"a", "b", "c"}))
 	})
 
 	t.Run("spaces", func(t *testing.T) {
 		RegisterTestingT(t)
-		Expect(parseCommandLine("a\\ b c")).To(Equal([]string{"a b", "c"}))
+		Expect(utils.ParseCommandLine("a\\ b c")).To(Equal([]string{"a b", "c"}))
 	})
 
 	t.Run("strings", func(t *testing.T) {
 		RegisterTestingT(t)
-		Expect(parseCommandLine("a \"b    \" c")).To(Equal([]string{"a", "b    ", "c"}))
+		Expect(utils.ParseCommandLine("a \"b    \" c")).To(Equal([]string{"a", "b    ", "c"}))
 	})
 
 	t.Run("empty_arg", func(t *testing.T) {
 		RegisterTestingT(t)
-		Expect(parseCommandLine("a 	-N \"\"" )).To(Equal([]string{"a", "-N", ""}))
+		Expect(utils.ParseCommandLine("a 	-N \"\"" )).To(Equal([]string{"a", "-N", ""}))
 	})
 
 

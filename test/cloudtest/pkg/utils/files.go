@@ -10,7 +10,7 @@ import (
 
 func OpenFile( root, fileName string) (string, *os.File, error) {
 	// Create folder if it doesn't exists
-	if !FolderExists(root) {
+	if !FileExists(root) {
 		_ = os.MkdirAll(root, os.ModePerm)
 	}
 	fileName = path.Join(root, fileName)
@@ -53,13 +53,13 @@ func WriteFile(root, fileName, content string) {
 	_ = f.Close()
 }
 
-func FolderExists(root string) bool {
+func FileExists(root string) bool {
 	_, err := os.Stat(root)
 	return !os.IsNotExist(err)
 }
 
 func ClearFolder(root string, recreate bool) {
-	if FolderExists(root) {
+	if FileExists(root) {
 		logrus.Infof("Cleaning report folder %s", root)
 		_ = os.RemoveAll(root)
 	}

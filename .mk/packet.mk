@@ -18,18 +18,23 @@ ifeq ($(wildcard ./scripts/terraform/packet.tfvars),)
 	TF_PACKET_VARS = -auto-approve
 else 
 	TF_PACKET_VARS = -var-file=packet.tfvars -auto-approve
-endif 
+endif
+
+ifeq ($(TERRAFORM_ROOT),)
+	TERRAFORM_ROOT := "scripts/terraform"
+endif
+
 
 .ONESHELL:
 packet-init:
-	@pushd scripts/terraform && \
+	@pushd ${TERRAFORM_ROOT} && \
 	terraform init && \
 	popd
 
 .ONESHELL:
 .PHONY: packet-start
 packet-start:
-	@pushd scripts/terraform && \
+	@pushd ${TERRAFORM_ROOT} && \
 	terraform apply ${TF_PACKET_VARS} && \
 	popd
 
@@ -41,7 +46,7 @@ packet-restart: packet-stop packet-start
 .ONESHELL:
 .PHONY: packet-stop
 packet-stop:
-	@pushd scripts/terraform && \
+	@pushd ${TERRAFORM_ROOT} && \
 	terraform destroy ${TF_PACKET_VARS} && \
 	popd
 
@@ -52,7 +57,7 @@ packet-%-load-images:
 .ONESHELL:
 .PHONY: packet-get-kubeconfig
 packet-get-kubeconfig:
-	@pushd scripts/terraform && \
+	@pushd ${TERRAFORM_ROOT} && \
 	scp ${SSH_OPTS} root@`terraform output master${PACKET_CLUSTER_ID}.public_ip`:.kube/config ../../kubeconfig && \
 	popd
 
