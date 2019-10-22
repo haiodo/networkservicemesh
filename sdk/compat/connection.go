@@ -3,6 +3,7 @@ package compat
 import (
 	unified "github.com/networkservicemesh/networkservicemesh/controlplane/api/connection"
 	"github.com/networkservicemesh/networkservicemesh/controlplane/api/connection/mechanisms/cls"
+	"github.com/networkservicemesh/networkservicemesh/controlplane/api/connection/mechanisms/interconnect"
 	"github.com/networkservicemesh/networkservicemesh/controlplane/api/connection/mechanisms/kernel"
 	"github.com/networkservicemesh/networkservicemesh/controlplane/api/connection/mechanisms/memif"
 	"github.com/networkservicemesh/networkservicemesh/controlplane/api/connection/mechanisms/vxlan"
@@ -59,6 +60,8 @@ func MechanismListUnifiedToLocal(mechanism []*unified.Mechanism) []*local.Mechan
 
 var mapMechanismTypeRemoteToUnified = map[remote.MechanismType]string{
 	remote.MechanismType_VXLAN: vxlan.MECHANISM,
+	remote.MechanismType_INTER_CONNECT: interconnect.Mechanism,
+
 }
 
 func MechanismRemoteToUnified(mechanism *remote.Mechanism) *unified.Mechanism {
@@ -82,6 +85,7 @@ func MechanismListRemoteToUnified(mechanism []*remote.Mechanism) []*unified.Mech
 
 var mapMechanismTypeUnifiedToRemote = map[string]remote.MechanismType{
 	vxlan.MECHANISM: remote.MechanismType_VXLAN,
+	interconnect.Mechanism: remote.MechanismType_INTER_CONNECT,
 }
 
 func MechanismUnifiedToRemote(mechanism *unified.Mechanism) *remote.Mechanism {

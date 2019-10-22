@@ -15,12 +15,12 @@
 package nsm
 
 import (
+	"github.com/networkservicemesh/networkservicemesh/controlplane/api/networkservice"
 	"time"
 
 	"github.com/networkservicemesh/networkservicemesh/controlplane/api/crossconnect"
 	"github.com/networkservicemesh/networkservicemesh/controlplane/api/nsm"
 	unified_connection "github.com/networkservicemesh/networkservicemesh/controlplane/api/nsm/connection"
-	unified_networkservice "github.com/networkservicemesh/networkservicemesh/controlplane/api/nsm/networkservice"
 	"github.com/networkservicemesh/networkservicemesh/controlplane/pkg/model"
 	"github.com/networkservicemesh/networkservicemesh/controlplane/pkg/plugins"
 	"github.com/networkservicemesh/networkservicemesh/controlplane/pkg/serviceregistry"
@@ -42,12 +42,10 @@ type ClientConnection interface {
 	GetNetworkService() string
 }
 
-// NetworkServiceClient is an interface for network service client
-type NetworkServiceClient interface {
-	Request(ctx context.Context, request unified_networkservice.Request) (unified_connection.Connection, error)
-	Close(ctx context.Context, connection unified_connection.Connection) error
-
+// NetworkServiceConnectionClient is an interface for network service client
+type NetworkServiceConnectionClient interface {
 	Cleanup() error
+	networkservice.NetworkServiceServer
 }
 
 // HealState - keep the cause of healing process
@@ -106,6 +104,10 @@ type NetworkServiceManager interface {
 type NetworkServiceEndpointManager interface {
 	GetEndpoint(ctx context.Context, requestConnection unified_connection.Connection, ignoreEndpoints map[registry.EndpointNSMName]*registry.NSERegistration) (*registry.NSERegistration, error)
 	CreateNSEClient(ctx context.Context, endpoint *registry.NSERegistration) (NetworkServiceClient, error)
+
+	CreateNSMClient(ctx context.Context, endpoint *registry.NSERegistration) (NetworkServiceConnectionClient, error)
+	CreateEndpointClient(ctx context.Context, endpoint *registry.NSERegistration) (NetworkServiceConnectionClient, error)
+
 	IsLocalEndpoint(endpoint *registry.NSERegistration) bool
 	CheckUpdateNSE(ctx context.Context, reg *registry.NSERegistration) bool
 }

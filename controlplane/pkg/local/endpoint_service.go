@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"github.com/networkservicemesh/networkservicemesh/controlplane/api/connection/mechanisms/interconnect"
 
 	"github.com/pkg/errors"
 
@@ -97,12 +98,7 @@ func (cce *endpointService) Request(ctx context.Context, request *networkservice
 		}
 	}()
 
-	var message unifiednetworkservice.Request
-	if cce.nseManager.IsLocalEndpoint(endpoint) {
-		message = cce.createLocalNSERequest(endpoint, dp, request.Connection, clientConnection)
-	} else {
-		message = cce.createRemoteNSMRequest(endpoint, request.Connection, dp, clientConnection)
-	}
+	message := cce.createRemoteNSMRequest(endpoint, request.Connection, dp, clientConnection)
 	logger.Infof("NSM:(7.2.6.2) Requesting NSE with request %v", message)
 
 	span := spanhelper.FromContext(ctx, "nse.request")
@@ -143,38 +139,18 @@ func (cce *endpointService) Close(ctx context.Context, connection *connection.Co
 	return ProcessClose(ctx, connection)
 }
 
-func (cce *endpointService) createLocalNSERequest(endpoint *registry.NSERegistration, dp *model.Forwarder, requestConn *connection.Connection, clientConnection *model.ClientConnection) unifiednetworkservice.Request {
-	// We need to obtain parameters for local mechanism
-	localM := append([]unifiedconnection.Mechanism{}, dp.LocalMechanisms...)
-
-	if clientConnection.ConnectionState == model.ClientConnectionHealing && endpoint == clientConnection.Endpoint {
-		if localDst := clientConnection.Xcon.GetLocalDestination(); localDst != nil {
-			return networkservice.NewRequest(
-				&connection.Connection{
-					Id:             localDst.GetId(),
-					NetworkService: localDst.NetworkService,
-					Context:        localDst.GetContext(),
-					Labels:         localDst.GetLabels(),
-				},
-				localM,
-			)
-		}
-	}
-
-	return networkservice.NewRequest(
-		&connection.Connection{
-			Id:             cce.model.ConnectionID(), // ID for NSE is managed by NSMgr
-			NetworkService: endpoint.GetNetworkService().GetName(),
-			Context:        requestConn.GetContext(),
-			Labels:         requestConn.GetLabels(),
-		},
-		localM,
-	)
-}
-
 func (cce *endpointService) createRemoteNSMRequest(endpoint *registry.NSERegistration, requestConn *connection.Connection, dp *model.Forwarder, clientConnection *model.ClientConnection) unifiednetworkservice.Request {
 	// We need to obtain parameters for remote mechanism
 	remoteM := append([]unifiedconnection.Mechanism{}, dp.RemoteMechanisms...)
+
+	if cce.nseManager.IsLocalEndpoint(endpoint) {
+		remoteM = append(remoteM, &remoteconnection.Mechanism{
+			Type: remoteconnection.MechanismType_INTER_CONNECT,
+			Parameters: map[string]string {
+				interconnect.ClientConnectionIdKey: clientConnection.ConnectionID,
+			},
+		})
+	}
 
 	// Try Heal only if endpoint are same as for existing connection.
 	if clientConnection.ConnectionState == model.ClientConnectionHealing && endpoint == clientConnection.Endpoint {

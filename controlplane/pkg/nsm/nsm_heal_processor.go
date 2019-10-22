@@ -177,7 +177,7 @@ func (p *healProcessor) healDstDown(ctx context.Context, cc *model.ClientConnect
 	if !p.nseManager.IsLocalEndpoint(cc.Endpoint) {
 		waitCtx, waitCancel := context.WithTimeout(ctx, p.properties.HealTimeout*3)
 		defer waitCancel()
-		remoteNsmClient, err := p.nseManager.CreateNSEClient(waitCtx, cc.Endpoint)
+		remoteNsmClient, err := p.nseManager.CreateNSMClient(waitCtx, cc.Endpoint)
 		if remoteNsmClient != nil {
 			_ = remoteNsmClient.Cleanup()
 		}

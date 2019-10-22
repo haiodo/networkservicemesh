@@ -37,6 +37,7 @@ enum MechanismType {
   MPLSoEthernet = 16;
   MPLSoGRE = 32;
   MPLSoUDP = 64;
+  INTER_CONNECT = 128;
 }
 
 enum State {
